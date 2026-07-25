@@ -9,21 +9,45 @@ document.addEventListener('DOMContentLoaded', () => {
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  function sendMessageToWhatsapp(message, callback) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tryTab = (tabId, cb) => {
+        chrome.tabs.sendMessage(tabId, message, (resp) => {
+          if (chrome.runtime.lastError || !resp) {
+            cb && cb(null);
+          } else cb && cb(resp);
+        });
+      };
+
+      if (tabs && tabs[0]) {
+        tryTab(tabs[0].id, (resp) => {
+          if (resp) return callback && callback(resp);
+          // fallback: look for any WhatsApp Web tab
+          chrome.tabs.query({ url: '*://web.whatsapp.com/*' }, (cands) => {
+            if (cands && cands[0]) {
+              tryTab(cands[0].id, (r2) => callback && callback(r2));
+            } else callback && callback(null);
+          });
+        });
+      } else {
+        chrome.tabs.query({ url: '*://web.whatsapp.com/*' }, (cands) => {
+          if (cands && cands[0]) {
+            tryTab(cands[0].id, (r2) => callback && callback(r2));
+          } else callback && callback(null);
+        });
+      }
+    });
+  }
+
   updateBtn.addEventListener('click', () => {
     log('Requesting scan of current chat...');
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs || !tabs[0]) {
-        log('No active tab');
+    sendMessageToWhatsapp({ action: 'scan' }, (resp) => {
+      if (!resp) {
+        log('No response from page. Make sure WhatsApp Web is open in some tab.');
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, { action: 'scan' }, (resp) => {
-        if (!resp) {
-          log('No response from page. Make sure WhatsApp Web is open in the active tab.');
-          return;
-        }
-        log(`Found ${resp.count} media items in the current chat`);
-        downloadBtn.disabled = resp.count === 0;
-      });
+      log(`Found ${resp.count} media items in the current chat`);
+      downloadBtn.disabled = resp.count === 0;
     });
   });
 
@@ -36,18 +60,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     log('Starting download...');
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs || !tabs[0]) {
-        log('No active tab');
+    sendMessageToWhatsapp({ action: 'download', filters, limit: 100 }, (resp) => {
+      if (!resp) {
+        log('No response from page.');
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, { action: 'download', filters, limit: 100 }, (resp) => {
-        if (!resp) {
-          log('No response from page.');
-          return;
-        }
-        log(`Download started: ${resp.count} items`);
-      });
+      log(`Download started: ${resp.count} items`);
     });
   });
 
