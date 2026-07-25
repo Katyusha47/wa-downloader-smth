@@ -404,6 +404,27 @@
         return true;
       }
 
+      if (msg && msg.action === 'selectChat') {
+        const title = msg.title || '';
+        try {
+          const candidates = Array.from(document.querySelectorAll('span[title]'))
+            .filter((n) => n && (n.getAttribute('title') === title || n.textContent.trim() === title));
+          if (candidates.length) {
+            const node = candidates[0];
+            const clickable = node.closest('div[role="button"], div[role="row"], li, div');
+            if (clickable) {
+              clickable.click();
+              sendResponse({ ok: true });
+              return true;
+            }
+          }
+        } catch (err) {
+          // ignore
+        }
+        sendResponse({ ok: false });
+        return true;
+      }
+
       if (msg && msg.action === 'scan') {
         const items = collectMediaTargets();
         sendResponse({ count: items.length });

@@ -2,11 +2,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const updateBtn = document.getElementById('updateChat');
   const downloadBtn = document.getElementById('downloadBtn');
   const logEl = document.getElementById('log');
+  const chatSelect = document.getElementById('chatSelect');
 
   function log(msg) {
     const time = new Date().toLocaleTimeString();
     logEl.value += `[${time}] ${msg}\n`;
     logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function populateChats(list) {
+    if (!chatSelect) return;
+    // Clear existing (keep first placeholder)
+    chatSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.textContent = 'Select a Chat/Group';
+    placeholder.value = '';
+    chatSelect.appendChild(placeholder);
+
+    list.forEach((title) => {
+      const opt = document.createElement('option');
+      opt.value = title;
+      opt.textContent = title;
+      chatSelect.appendChild(opt);
+    });
   }
 
   function sendMessageToWhatsapp(message, callback) {
@@ -59,15 +77,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   updateBtn.addEventListener('click', () => {
-    log('Requesting scan of current chat...');
-    sendMessageToWhatsapp({ action: 'scan' }, (resp) => {
-      if (!resp) {
-        log('No response from page. Make sure WhatsApp Web is open in some tab.');
-        return;
-      }
-      log(`Found ${resp.count} media items in the current chat`);
-      downloadBtn.disabled = resp.count === 0;
-    });
+    const selected = chatSelect && chatSelect.value;
+    if (selected) {
+      log(`Selecting chat: ${selected}`);
+      sendMessageToWhatsapp({ action: 'selectChat', title: selected }, (selectResp) => {
+        if (!selectResp || !selectResp.ok) {
+          log('Could not select chat in page.');
+        }
+        // After attempting selection, scan
+        log('Requesting scan of selected chat...');
+        sendMessageToWhatsapp({ action: 'scan' }, (resp) => {
+          if (!resp) {
+            log('No response from page after selecting chat.');
+            return;
+          }
+          log(`Found ${resp.count} media items in the current chat`);
+          downloadBtn.disabled = resp.count === 0;
+        });
+      });
+    } else {
+      log('Requesting scan of current chat...');
+      sendMessageToWhatsapp({ action: 'scan' }, (resp) => {
+        if (!resp) {
+          log('No response from page. Make sure WhatsApp Web is open in some tab.');
+          return;
+        }
+        log(`Found ${resp.count} media items in the current chat`);
+        downloadBtn.disabled = resp.count === 0;
+      });
+    }
   });
 
   downloadBtn.addEventListener('click', () => {
@@ -79,7 +117,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     log('Starting download...');
-    sendMessageToWhatsapp({ action: 'download', filters, limit: 100 }, (resp) => {
+    const payload = { action: 'download', filters, limit: 100 };
+    if (chatSelect && chatSelect.value) payload.chat = chatSelect.value;
+
+    sendMessageToWhatsapp(payload, (resp) => {
       if (!resp) {
         log('No response from page.');
         return;
@@ -95,5 +136,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (msg.action === 'done') {
       log(`Done — processed ${msg.count} items`);
     }
+  });
+
+  // On load, populate chat list
+  sendMessageToWhatsapp({ action: 'listChats' }, (resp) => {
+    if (!resp || !resp.chats) {
+      log('Could not retrieve chat list from page.');
+      return;
+    }
+    populateChats(resp.chats);
+    log(`Found ${resp.chats.length} chats`);
   });
 });
