@@ -20,3 +20,86 @@
 .wmdc-has-download-target {
   position: relative;
 }
+
+.wmdc-bulk-open-btn {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10000;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(17, 27, 33, 0.9);
+  cursor: pointer;
+}
+
+.wmdc-bulk-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.wmdc-bulk-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 68px;
+  z-index: 10001;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 14px;
+  background: #111b21;
+  color: #e9edef;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+.wmdc-bulk-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.wmdc-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wmdc-bulk-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #2a3942;
+  cursor: pointer;
+}
+
+.wmdc-bulk-actions button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.wmdc-bulk-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wmdc-bulk-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: #202c33;
+  font-size: 12px;
+}

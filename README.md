@@ -5,7 +5,8 @@ This repository contains a minimal, open-source Chrome extension that replicates
 ## Features
 
 - Injects a **Download** button on WhatsApp Web media tiles
-- Supports common media targets (images, videos, downloadable links/files)
+- Adds a **Bulk media** panel to collect media from the active chat and select which files to download
+- Supports common media targets (images, videos, audio, downloadable links/files)
 - Handles blob URLs by fetching and saving locally
 
 ## Install (Developer Mode)
@@ -20,7 +21,9 @@ This repository contains a minimal, open-source Chrome extension that replicates
 
 1. Open `https://web.whatsapp.com/`
 2. Open a chat with media
-3. Hover/open media and click **Download** when the button appears
+3. Use either:
+   - **Download** on individual media
+   - **Bulk media** (bottom-right) to select many media/documents/audio/video items and download selected
 
 ## Validation
 

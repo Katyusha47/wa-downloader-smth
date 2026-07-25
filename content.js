@@ -1,33 +1,51 @@
 (() => {
   const BUTTON_CLASS = 'wmdc-download-btn';
   const TARGET_CLASS = 'wmdc-has-download-target';
+  const BULK_BUTTON_CLASS = 'wmdc-bulk-open-btn';
+  const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
+  const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
+
+  function getExtensionFromUrl(url, fallback = 'bin') {
+    const namedMatch = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(url);
+    return namedMatch ? namedMatch[1].toLowerCase() : fallback;
+  }
 
   function getDownloadTarget(container) {
     const video = container.querySelector('video[src], video source[src]');
     if (video) {
       return {
-        url: video.src,
-        extension: 'mp4'
+        url: video.currentSrc || video.src,
+        extension: 'mp4',
+        type: 'video'
+      };
+    }
+
+    const audio = container.querySelector('audio[src], audio source[src]');
+    if (audio) {
+      return {
+        url: audio.currentSrc || audio.src,
+        extension: 'mp3',
+        type: 'audio'
       };
     }
 
     const image = container.querySelector('img[src]');
     if (image) {
       const src = image.currentSrc || image.src;
-      const ext = src.includes('.webp') ? 'webp' : 'jpg';
       return {
         url: src,
-        extension: ext
+        extension: src.includes('.webp') ? 'webp' : 'jpg',
+        type: 'image'
       };
     }
 
     const link = container.querySelector('a[href][download], a[href*="blob:"], a[href*="mmg.whatsapp.net"]');
     if (link) {
       const href = link.href;
-      const namedMatch = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(href);
       return {
         url: href,
-        extension: namedMatch ? namedMatch[1].toLowerCase() : 'bin'
+        extension: getExtensionFromUrl(href),
+        type: 'document'
       };
     }
 
@@ -104,6 +122,225 @@
     container.appendChild(button);
   }
 
+  function getChatRoot() {
+    return document.querySelector('#main') || document.body;
+  }
+
+  function getNodeType(node) {
+    if (node.matches('video, video source')) {
+      return 'video';
+    }
+    if (node.matches('audio, audio source')) {
+      return 'audio';
+    }
+    if (node.matches('img')) {
+      return 'image';
+    }
+    return 'document';
+  }
+
+  function toCandidate(node) {
+    const type = getNodeType(node);
+
+    if (type === 'image') {
+      const src = node.currentSrc || node.src;
+      if (!src) {
+        return null;
+      }
+      return {
+        url: src,
+        type,
+        extension: src.includes('.webp') ? 'webp' : 'jpg'
+      };
+    }
+
+    if (type === 'video' || type === 'audio') {
+      const src = node.currentSrc || node.src;
+      if (!src) {
+        return null;
+      }
+      return {
+        url: src,
+        type,
+        extension: type === 'video' ? 'mp4' : 'mp3'
+      };
+    }
+
+    const href = node.href;
+    if (!href) {
+      return null;
+    }
+
+    return {
+      url: href,
+      type,
+      extension: getExtensionFromUrl(href)
+    };
+  }
+
+  function collectMediaTargets() {
+    const root = getChatRoot();
+    const selectors = [
+      'img[src]',
+      'video[src], video source[src]',
+      'audio[src], audio source[src]',
+      'a[href][download]',
+      'a[href*="blob:"]',
+      'a[href*="mmg.whatsapp.net"]'
+    ];
+
+    const items = [];
+    const seen = new Set();
+
+    root.querySelectorAll(selectors.join(',')).forEach((node) => {
+      const candidate = toCandidate(node);
+      if (!candidate || !candidate.url || seen.has(candidate.url)) {
+        return;
+      }
+      seen.add(candidate.url);
+      items.push(candidate);
+    });
+
+    return items;
+  }
+
+  function closeBulkPanel() {
+    document.querySelector(`.${BULK_BACKDROP_CLASS}`)?.remove();
+    document.querySelector(`.${BULK_PANEL_CLASS}`)?.remove();
+  }
+
+  function getLabel(item, index) {
+    return `${item.type.toUpperCase()} ${index + 1} · ${item.extension}`;
+  }
+
+  function renderBulkPanel(items) {
+    closeBulkPanel();
+
+    const backdrop = document.createElement('div');
+    backdrop.className = BULK_BACKDROP_CLASS;
+    backdrop.addEventListener('click', closeBulkPanel);
+
+    const panel = document.createElement('div');
+    panel.className = BULK_PANEL_CLASS;
+
+    const title = document.createElement('h3');
+    title.textContent = `Bulk download (${items.length} found)`;
+
+    const actions = document.createElement('div');
+    actions.className = 'wmdc-bulk-actions';
+
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.textContent = 'Select all';
+
+    const clearAll = document.createElement('button');
+    clearAll.type = 'button';
+    clearAll.textContent = 'Clear';
+
+    const downloadSelected = document.createElement('button');
+    downloadSelected.type = 'button';
+    downloadSelected.textContent = 'Download selected';
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Close';
+
+    actions.append(selectAll, clearAll, downloadSelected, close);
+
+    const list = document.createElement('div');
+    list.className = 'wmdc-bulk-list';
+
+    const checkboxes = [];
+    items.forEach((item, index) => {
+      const row = document.createElement('label');
+      row.className = 'wmdc-bulk-item';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = true;
+      checkbox.dataset.url = item.url;
+      checkbox.dataset.extension = item.extension;
+
+      const text = document.createElement('span');
+      text.textContent = getLabel(item, index);
+
+      row.append(checkbox, text);
+      list.appendChild(row);
+      checkboxes.push(checkbox);
+    });
+
+    selectAll.addEventListener('click', () => {
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = true;
+      });
+    });
+
+    clearAll.addEventListener('click', () => {
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+    });
+
+    close.addEventListener('click', closeBulkPanel);
+
+    downloadSelected.addEventListener('click', async () => {
+      const selected = checkboxes.filter((checkbox) => checkbox.checked);
+      if (!selected.length) {
+        downloadSelected.textContent = 'No items selected';
+        setTimeout(() => {
+          downloadSelected.textContent = 'Download selected';
+        }, 1200);
+        return;
+      }
+
+      downloadSelected.disabled = true;
+      downloadSelected.textContent = 'Downloading...';
+
+      for (const checkbox of selected) {
+        try {
+          await downloadUrl(checkbox.dataset.url, checkbox.dataset.extension || 'bin');
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        } catch (error) {
+          console.error('[WA Downloader Clone] bulk download failed', error);
+        }
+      }
+
+      downloadSelected.textContent = 'Done';
+      setTimeout(() => {
+        downloadSelected.disabled = false;
+        downloadSelected.textContent = 'Download selected';
+      }, 1200);
+    });
+
+    panel.append(title, actions, list);
+    document.body.append(backdrop, panel);
+  }
+
+  function ensureBulkButton() {
+    if (document.querySelector(`.${BULK_BUTTON_CLASS}`)) {
+      return;
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = BULK_BUTTON_CLASS;
+    button.textContent = 'Bulk media';
+
+    button.addEventListener('click', () => {
+      const items = collectMediaTargets();
+      if (!items.length) {
+        button.textContent = 'No media found';
+        setTimeout(() => {
+          button.textContent = 'Bulk media';
+        }, 1200);
+        return;
+      }
+      renderBulkPanel(items);
+    });
+
+    document.body.appendChild(button);
+  }
+
   function scanForMediaContainers(root = document) {
     const selectors = [
       '[data-testid="image-thumb"]',
@@ -111,11 +348,11 @@
       '[data-testid="media-viewer"]',
       'div[role="button"] img[src]',
       'video[src]',
+      'audio[src]',
       'a[download]'
     ];
 
-    const nodes = root.querySelectorAll(selectors.join(','));
-    nodes.forEach((node) => {
+    root.querySelectorAll(selectors.join(',')).forEach((node) => {
       const container = node.closest('div') || node.parentElement;
       if (container) {
         attachDownloadButton(container);
@@ -124,6 +361,7 @@
   }
 
   scanForMediaContainers();
+  ensureBulkButton();
 
   const observer = new MutationObserver((entries) => {
     for (const entry of entries) {
@@ -133,6 +371,7 @@
         }
       }
     }
+    ensureBulkButton();
   });
 
   observer.observe(document.body, {
