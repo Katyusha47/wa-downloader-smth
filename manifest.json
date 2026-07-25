@@ -3,6 +3,10 @@
   "name": "WA Media Downloader Clone",
   "description": "Adds one-click media download buttons to WhatsApp Web messages.",
   "version": "0.1.0",
+  "action": {
+    "default_title": "WA Media Downloader",
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": ["https://web.whatsapp.com/*"],
