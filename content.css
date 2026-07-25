@@ -1,0 +1,22 @@
+.wmdc-download-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: rgba(17, 27, 33, 0.82);
+  cursor: pointer;
+}
+
+.wmdc-download-btn:hover {
+  background: rgba(17, 27, 33, 0.95);
+}
+
+.wmdc-has-download-target {
+  position: relative;
+}

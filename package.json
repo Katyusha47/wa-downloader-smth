@@ -1,0 +1,26 @@
+{
+  "name": "wa-downloader-smth",
+  "version": "1.0.0",
+  "description": "Open-source clone-style Chrome extension for downloading WhatsApp Web media.",
+  "main": "content.js",
+  "scripts": {
+    "test": "node --check content.js",
+    "lint": "node --check content.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Katyusha47/wa-downloader-smth.git"
+  },
+  "keywords": [
+    "chrome-extension",
+    "whatsapp",
+    "media-downloader"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Katyusha47/wa-downloader-smth/issues"
+  },
+  "homepage": "https://github.com/Katyusha47/wa-downloader-smth#readme"
+}
