@@ -387,4 +387,47 @@
     childList: true,
     subtree: true
   });
+
+  // Messaging: respond to popup requests for scanning and downloads
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg && msg.action === 'scan') {
+        const items = collectMediaTargets();
+        sendResponse({ count: items.length });
+        return true;
+      }
+
+      if (msg && msg.action === 'download') {
+        const filters = msg.filters || {};
+        let items = collectMediaTargets();
+        items = items.filter((it) => {
+          if (it.type === 'image' && !filters.images) return false;
+          if (it.type === 'video' && !filters.video) return false;
+          if (it.type === 'audio' && !filters.audio) return false;
+          if (it.type === 'document' && !filters.documents) return false;
+          return true;
+        });
+
+        const limit = typeof msg.limit === 'number' ? msg.limit : items.length;
+        const toProcess = items.slice(0, limit);
+        sendResponse({ status: 'started', count: toProcess.length });
+
+        (async () => {
+          for (let i = 0; i < toProcess.length; i++) {
+            const it = toProcess[i];
+            try {
+              await downloadUrl(it.url, it.extension || 'bin');
+              chrome.runtime.sendMessage({ action: 'log', text: `Saved ${i + 1}/${toProcess.length} ${it.type}` });
+            } catch (err) {
+              chrome.runtime.sendMessage({ action: 'log', text: `Failed ${i + 1}: ${err && err.message ? err.message : err}` });
+            }
+            await new Promise((r) => setTimeout(r, 150));
+          }
+          chrome.runtime.sendMessage({ action: 'done', count: toProcess.length });
+        })();
+
+        return true;
+      }
+    });
+  }
 })();

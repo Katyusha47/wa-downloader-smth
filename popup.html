@@ -8,14 +8,38 @@
   </head>
   <body>
     <main class="popup">
-      <p class="eyebrow">WA Media Downloader</p>
-      <h1>Chrome extension loaded</h1>
-      <p class="copy">
-        Open WhatsApp Web, then click the injected download buttons on media or the bulk button in the chat.
-      </p>
-      <a class="button" href="https://web.whatsapp.com/" target="_blank" rel="noreferrer">
-        Open WhatsApp Web
-      </a>
+      <div class="header">
+        <img src="icon48.png" alt="logo" class="logo" />
+        <h2>WA Media Downloader</h2>
+      </div>
+
+      <label class="field">
+        <div class="label">Chat</div>
+        <select id="chatSelect">
+          <option>Select a Chat/Group</option>
+        </select>
+      </label>
+
+      <div class="section-title">Media Download</div>
+
+      <div class="row">
+        <label class="check"><input type="checkbox" id="optImages" checked /> Images</label>
+        <label class="check"><input type="checkbox" id="optVideo" checked /> Video</label>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="optAudio" checked /> Audio</label>
+        <label class="check"><input type="checkbox" id="optDocs" checked /> Documents</label>
+      </div>
+
+      <div class="actions">
+        <button id="updateChat" class="btn">Update chat</button>
+        <button id="downloadBtn" class="btn primary" disabled>Download</button>
+      </div>
+
+      <textarea id="log" class="log" readonly></textarea>
+
+      <footer class="footer">WA Media Downloader</footer>
     </main>
+    <script src="popup.js"></script>
   </body>
 </html>
