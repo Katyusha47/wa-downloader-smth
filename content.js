@@ -391,6 +391,19 @@
   // Messaging: respond to popup requests for scanning and downloads
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg && msg.action === 'listChats') {
+        try {
+          const nodes = Array.from(document.querySelectorAll('span[title]'))
+            .filter((n) => n && n.textContent && n.offsetParent !== null)
+            .map((n) => n.getAttribute('title') || n.textContent.trim());
+          const unique = [...new Set(nodes)].slice(0, 200);
+          sendResponse({ chats: unique });
+        } catch (err) {
+          sendResponse({ chats: [] });
+        }
+        return true;
+      }
+
       if (msg && msg.action === 'scan') {
         const items = collectMediaTargets();
         sendResponse({ count: items.length });

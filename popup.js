@@ -19,20 +19,39 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       };
 
+      const tryInjectionThenMessage = (tabId, finalCb) => {
+        tryTab(tabId, (resp) => {
+          if (resp) return finalCb && finalCb(resp);
+          // attempt to inject content script and css, then retry
+          if (chrome.scripting) {
+            chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }, () => {
+              // ignore errors; try sending again
+              tryTab(tabId, (resp2) => finalCb && finalCb(resp2));
+            });
+            // also insert CSS so UI appears
+            if (chrome.scripting.insertCSS) {
+              chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] }, () => {});
+            }
+          } else {
+            finalCb && finalCb(null);
+          }
+        });
+      };
+
       if (tabs && tabs[0]) {
-        tryTab(tabs[0].id, (resp) => {
+        tryInjectionThenMessage(tabs[0].id, (resp) => {
           if (resp) return callback && callback(resp);
-          // fallback: look for any WhatsApp Web tab
+          // fallback: look for any WhatsApp Web tab and try there
           chrome.tabs.query({ url: '*://web.whatsapp.com/*' }, (cands) => {
             if (cands && cands[0]) {
-              tryTab(cands[0].id, (r2) => callback && callback(r2));
+              tryInjectionThenMessage(cands[0].id, (r2) => callback && callback(r2));
             } else callback && callback(null);
           });
         });
       } else {
         chrome.tabs.query({ url: '*://web.whatsapp.com/*' }, (cands) => {
           if (cands && cands[0]) {
-            tryTab(cands[0].id, (r2) => callback && callback(r2));
+            tryInjectionThenMessage(cands[0].id, (r2) => callback && callback(r2));
           } else callback && callback(null);
         });
       }

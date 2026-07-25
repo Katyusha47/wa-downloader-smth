@@ -9,7 +9,11 @@
   },
   "permissions": [
     "activeTab",
-    "tabs"
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*"
   ],
   "content_scripts": [
     {
