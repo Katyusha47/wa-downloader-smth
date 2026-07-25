@@ -99,6 +99,15 @@
     button.className = BUTTON_CLASS;
     button.textContent = 'Download';
 
+    const stopInteraction = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    button.addEventListener('mousedown', stopInteraction);
+    button.addEventListener('pointerdown', stopInteraction);
+    button.addEventListener('touchstart', stopInteraction);
+
     button.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
