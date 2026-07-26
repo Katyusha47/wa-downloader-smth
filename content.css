@@ -1,70 +1,95 @@
+/* In-message download button styling */
+.wmdc-has-download-target {
+  position: relative !important;
+}
+
 .wmdc-download-btn {
   position: absolute;
   top: 6px;
-  right: 6px;
-  z-index: 2147483647;
+  right: 32px; /* Leave space for message context chevron */
+  z-index: 99999;
   pointer-events: auto;
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
   font-weight: 600;
   color: #ffffff;
-  background: rgba(17, 27, 33, 0.82);
+  background: rgba(17, 27, 33, 0.88);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  backdrop-filter: blur(4px);
 }
 
 .wmdc-download-btn:hover {
-  background: rgba(17, 27, 33, 0.95);
+  background: rgba(37, 211, 102, 0.95);
+  color: #081012;
+  transform: translateY(-1px);
 }
 
-.wmdc-has-download-target {
-  position: relative;
-  isolation: isolate;
+.wmdc-download-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+  transform: none;
 }
 
+/* Floating bulk download trigger button */
 .wmdc-bulk-open-btn {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 10000;
+  z-index: 2147483646;
   border: 0;
   border-radius: 999px;
-  padding: 10px 14px;
+  padding: 10px 16px;
   font-size: 13px;
   font-weight: 700;
-  color: #ffffff;
-  background: rgba(17, 27, 33, 0.9);
+  color: #081012;
+  background: #25d366;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
+.wmdc-bulk-open-btn:hover {
+  background: #1fbe59;
+  transform: translateY(-1px);
+}
+
+/* Bulk modal overlay & panel */
 .wmdc-bulk-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 10000;
-  background: rgba(0, 0, 0, 0.45);
+  z-index: 2147483646;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
 }
 
 .wmdc-bulk-panel {
   position: fixed;
   right: 16px;
   bottom: 68px;
-  z-index: 10001;
-  width: min(420px, calc(100vw - 32px));
-  max-height: min(70vh, 520px);
+  z-index: 2147483647;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(75vh, 540px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  border-radius: 10px;
-  padding: 14px;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 16px;
   background: #111b21;
   color: #e9edef;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 .wmdc-bulk-panel h3 {
   margin: 0;
   font-size: 15px;
+  font-weight: 700;
+  color: #25d366;
 }
 
 .wmdc-bulk-actions {
@@ -76,32 +101,53 @@
 .wmdc-bulk-actions button {
   border: 0;
   border-radius: 999px;
-  padding: 7px 10px;
+  padding: 7px 12px;
   font-size: 12px;
   font-weight: 600;
   color: #ffffff;
   background: #2a3942;
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.wmdc-bulk-actions button:hover:not(:disabled) {
+  background: #3b4a54;
 }
 
 .wmdc-bulk-actions button:disabled {
-  opacity: 0.65;
+  opacity: 0.6;
   cursor: default;
 }
 
 .wmdc-bulk-list {
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 340px;
+  padding-right: 4px;
 }
 
 .wmdc-bulk-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border-radius: 6px;
-  padding: 7px 8px;
+  padding: 8px 10px;
   background: #202c33;
   font-size: 12px;
+  word-break: break-word;
+  user-select: none;
+  cursor: pointer;
+}
+
+.wmdc-bulk-item:hover {
+  background: #2a3942;
+}
+
+.wmdc-bulk-item input[type="checkbox"] {
+  accent-color: #25d366;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
 }

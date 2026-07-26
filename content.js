@@ -5,85 +5,210 @@
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
 
+  // --- Filtering & Validation Helpers ---
+
+  function isIgnoredImage(img) {
+    if (!img) return true;
+    const src = img.currentSrc || img.src || '';
+    if (!src) return true;
+
+    // Filter out emojis, avatars, stickers, reactions, inline SVGs
+    if (
+      src.includes('/emoji/') ||
+      src.includes('pps.whatsapp.net') ||
+      src.includes('/pps/') ||
+      src.includes('data:image/svg+xml') ||
+      src.includes('data:image/gif') ||
+      src.includes('sticker') ||
+      src.includes('reaction')
+    ) {
+      return true;
+    }
+
+    // Ignore tiny images (avatars, icons, reaction badges)
+    const width = img.naturalWidth || img.width || img.clientWidth || 0;
+    const height = img.naturalHeight || img.height || img.clientHeight || 0;
+    if ((width > 0 && width < 60) || (height > 0 && height < 60)) {
+      return true;
+    }
+
+    // Ignore images inside header, status bar, or side pane
+    if (img.closest('#pane-side') || img.closest('header')) {
+      return true;
+    }
+
+    return false;
+  }
+
   function getExtensionFromUrl(url, fallback = 'bin') {
+    if (!url) return fallback;
     const namedMatch = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(url);
     return namedMatch ? namedMatch[1].toLowerCase() : fallback;
   }
 
+  function formatTimestampFilename(prefix = 'wa-media', ext = 'bin') {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `${prefix}-${stamp}.${ext}`;
+  }
+
+  // Extract original document or media filename from DOM
+  function extractFilenameFromContainer(container, defaultExt) {
+    // Check for document title/name in text elements inside document card
+    const titleEl = container.querySelector('[title*="."], span[dir="auto"][title], [data-testid="document-thumb"] + div span');
+    if (titleEl) {
+      const name = titleEl.getAttribute('title') || titleEl.textContent?.trim();
+      if (name && name.includes('.')) {
+        return name.replace(/[/\\?%*:|"<>]/g, '_');
+      }
+    }
+    return formatTimestampFilename('wa-media', defaultExt);
+  }
+
+  // Locate the actual WhatsApp Web message bubble container
+  function getMessageBubbleContainer(node) {
+    if (!node) return null;
+    return (
+      node.closest('[data-testid="msg-container"]') ||
+      node.closest('div[role="row"]') ||
+      node.closest('.message-in, .message-out') ||
+      node.parentElement
+    );
+  }
+
+  // --- Target Extraction ---
+
   function getDownloadTarget(container) {
+    if (!container) return null;
+
+    // 1. Video
     const video = container.querySelector('video[src], video source[src]');
     if (video) {
-      return {
-        url: video.currentSrc || video.src,
-        extension: 'mp4',
-        type: 'video'
-      };
+      const src = video.currentSrc || video.src;
+      if (src) {
+        return {
+          url: src,
+          extension: 'mp4',
+          type: 'video',
+          filename: formatTimestampFilename('wa-video', 'mp4')
+        };
+      }
     }
 
-    const audio = container.querySelector('audio[src], audio source[src]');
+    // 2. Audio / Voice Note
+    const audio = container.querySelector('audio[src], audio source[src], [data-testid="audio-player"] audio');
     if (audio) {
+      const src = audio.currentSrc || audio.src;
+      if (src) {
+        return {
+          url: src,
+          extension: 'mp3',
+          type: 'audio',
+          filename: formatTimestampFilename('wa-audio', 'mp3')
+        };
+      }
+    }
+
+    // 3. Document attachment
+    const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"]');
+    if (docLink && docLink.href) {
+      const ext = getExtensionFromUrl(docLink.href, 'pdf');
+      const filename = extractFilenameFromContainer(container, ext);
       return {
-        url: audio.currentSrc || audio.src,
-        extension: 'mp3',
-        type: 'audio'
+        url: docLink.href,
+        extension: ext,
+        type: 'document',
+        filename
       };
     }
 
-    const image = container.querySelector('img[src]');
-    if (image) {
+    // 4. Image
+    const images = Array.from(container.querySelectorAll('img[src]')).filter((img) => !isIgnoredImage(img));
+    if (images.length > 0) {
+      const image = images[0];
       const src = image.currentSrc || image.src;
+      const ext = src.includes('.webp') ? 'webp' : 'jpg';
       return {
         url: src,
-        extension: src.includes('.webp') ? 'webp' : 'jpg',
-        type: 'image'
-      };
-    }
-
-    const link = container.querySelector('a[href][download], a[href*="blob:"], a[href*="mmg.whatsapp.net"]');
-    if (link) {
-      const href = link.href;
-      return {
-        url: href,
-        extension: getExtensionFromUrl(href),
-        type: 'document'
+        extension: ext,
+        type: 'image',
+        filename: formatTimestampFilename('wa-image', ext)
       };
     }
 
     return null;
   }
 
-  function toFilename(extension) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    return `wa-media-${stamp}.${extension}`;
+  // Convert blob: URLs to Data URLs so service worker / background script can download them cleanly
+  async function prepareUrlForDownload(url) {
+    if (url.startsWith('blob:')) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Blob fetch failed: ${response.status}`);
+        const blob = await response.blob();
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.warn('[WA Downloader] Fallback to direct blob URL due to fetch error:', err);
+        return url;
+      }
+    }
+    return url;
   }
 
-  async function downloadUrl(url, extension) {
-    let href = url;
+  // --- Download Execution ---
 
-    if (url.startsWith('blob:')) {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch blob: ${response.status}`);
-      }
-      const blob = await response.blob();
-      href = URL.createObjectURL(blob);
+  async function triggerDownload(target) {
+    if (!target || !target.url) throw new Error('Invalid download target');
+
+    const downloadUrl = await prepareUrlForDownload(target.url);
+
+    // Try background service worker download first
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            action: 'downloadMedia',
+            url: downloadUrl,
+            filename: target.filename || formatTimestampFilename('wa-media', target.extension || 'bin')
+          },
+          (response) => {
+            if (chrome.runtime.lastError || !response || !response.ok) {
+              const errMsg = chrome.runtime.lastError?.message || response?.error || 'Background download failed';
+              // Fallback to dynamic anchor click
+              fallbackAnchorDownload(downloadUrl, target.filename || formatTimestampFilename('wa-media', target.extension));
+              resolve();
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+    } else {
+      fallbackAnchorDownload(downloadUrl, target.filename || formatTimestampFilename('wa-media', target.extension));
     }
+  }
 
+  function fallbackAnchorDownload(url, filename) {
     const anchor = document.createElement('a');
-    anchor.href = href;
-    anchor.download = toFilename(extension);
+    anchor.href = url;
+    anchor.download = filename;
     anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-
-    if (href !== url) {
-      setTimeout(() => URL.revokeObjectURL(href), 2000);
-    }
   }
 
-  function attachDownloadButton(container) {
-    if (container.querySelector(`.${BUTTON_CLASS}`)) {
+  // --- In-Message Download Button Injection ---
+
+  function attachDownloadButton(node) {
+    const container = getMessageBubbleContainer(node);
+    if (!container || container.querySelector(`.${BUTTON_CLASS}`)) {
       return;
     }
 
@@ -111,11 +236,12 @@
     button.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
+
       button.disabled = true;
       button.textContent = 'Saving...';
 
       try {
-        await downloadUrl(target.url, target.extension);
+        await triggerDownload(target);
         button.textContent = 'Saved';
       } catch (error) {
         console.error('[WA Downloader Clone] download failed', error);
@@ -124,67 +250,17 @@
         setTimeout(() => {
           button.disabled = false;
           button.textContent = 'Download';
-        }, 1200);
+        }, 1500);
       }
     });
 
     container.appendChild(button);
   }
 
+  // --- Bulk Download Capabilities ---
+
   function getChatRoot() {
     return document.querySelector('#main') || document.body;
-  }
-
-  function getNodeType(node) {
-    if (node.matches('video, video source')) {
-      return 'video';
-    }
-    if (node.matches('audio, audio source')) {
-      return 'audio';
-    }
-    if (node.matches('img')) {
-      return 'image';
-    }
-    return 'document';
-  }
-
-  function toCandidate(node) {
-    const type = getNodeType(node);
-
-    if (type === 'image') {
-      const src = node.currentSrc || node.src;
-      if (!src) {
-        return null;
-      }
-      return {
-        url: src,
-        type,
-        extension: src.includes('.webp') ? 'webp' : 'jpg'
-      };
-    }
-
-    if (type === 'video' || type === 'audio') {
-      const src = node.currentSrc || node.src;
-      if (!src) {
-        return null;
-      }
-      return {
-        url: src,
-        type,
-        extension: type === 'video' ? 'mp4' : 'mp3'
-      };
-    }
-
-    const href = node.href;
-    if (!href) {
-      return null;
-    }
-
-    return {
-      url: href,
-      type,
-      extension: getExtensionFromUrl(href)
-    };
   }
 
   function collectMediaTargets() {
@@ -192,7 +268,7 @@
     const selectors = [
       'img[src]',
       'video[src], video source[src]',
-      'audio[src], audio source[src]',
+      'audio[src], audio source[src], [data-testid="audio-player"] audio',
       'a[href][download]',
       'a[href*="blob:"]',
       'a[href*="mmg.whatsapp.net"]'
@@ -202,12 +278,18 @@
     const seen = new Set();
 
     root.querySelectorAll(selectors.join(',')).forEach((node) => {
-      const candidate = toCandidate(node);
-      if (!candidate || !candidate.url || seen.has(candidate.url)) {
+      if (node.tagName === 'IMG' && isIgnoredImage(node)) {
         return;
       }
-      seen.add(candidate.url);
-      items.push(candidate);
+
+      const container = getMessageBubbleContainer(node);
+      const target = getDownloadTarget(container || node);
+      if (!target || !target.url || seen.has(target.url)) {
+        return;
+      }
+
+      seen.add(target.url);
+      items.push(target);
     });
 
     return items;
@@ -219,7 +301,8 @@
   }
 
   function getLabel(item, index) {
-    return `${item.type.toUpperCase()} ${index + 1} · ${item.extension}`;
+    const nameStr = item.filename ? ` (${item.filename})` : '';
+    return `${item.type.toUpperCase()} ${index + 1} · ${item.extension}${nameStr}`;
   }
 
   function renderBulkPanel(items) {
@@ -233,7 +316,7 @@
     panel.className = BULK_PANEL_CLASS;
 
     const title = document.createElement('h3');
-    title.textContent = `Bulk download (${items.length} found)`;
+    title.textContent = `Bulk download (${items.length} items found)`;
 
     const actions = document.createElement('div');
     actions.className = 'wmdc-bulk-actions';
@@ -267,33 +350,27 @@
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.checked = true;
-      checkbox.dataset.url = item.url;
-      checkbox.dataset.extension = item.extension;
 
       const text = document.createElement('span');
       text.textContent = getLabel(item, index);
 
       row.append(checkbox, text);
       list.appendChild(row);
-      checkboxes.push(checkbox);
+      checkboxes.push({ checkbox, item });
     });
 
     selectAll.addEventListener('click', () => {
-      checkboxes.forEach((checkbox) => {
-        checkbox.checked = true;
-      });
+      checkboxes.forEach(({ checkbox }) => (checkbox.checked = true));
     });
 
     clearAll.addEventListener('click', () => {
-      checkboxes.forEach((checkbox) => {
-        checkbox.checked = false;
-      });
+      checkboxes.forEach(({ checkbox }) => (checkbox.checked = false));
     });
 
     close.addEventListener('click', closeBulkPanel);
 
     downloadSelected.addEventListener('click', async () => {
-      const selected = checkboxes.filter((checkbox) => checkbox.checked);
+      const selected = checkboxes.filter(({ checkbox }) => checkbox.checked);
       if (!selected.length) {
         downloadSelected.textContent = 'No items selected';
         setTimeout(() => {
@@ -305,12 +382,13 @@
       downloadSelected.disabled = true;
       downloadSelected.textContent = 'Downloading...';
 
-      for (const checkbox of selected) {
+      for (let i = 0; i < selected.length; i++) {
+        const { item } = selected[i];
         try {
-          await downloadUrl(checkbox.dataset.url, checkbox.dataset.extension || 'bin');
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          await triggerDownload(item);
+          await new Promise((resolve) => setTimeout(resolve, 200));
         } catch (error) {
-          console.error('[WA Downloader Clone] bulk download failed', error);
+          console.error('[WA Downloader Clone] bulk download item failed', error);
         }
       }
 
@@ -350,37 +428,53 @@
     document.body.appendChild(button);
   }
 
+  // --- Scanning & Observer (Debounced for performance) ---
+
   function scanForMediaContainers(root = document) {
     const selectors = [
+      '[data-testid="msg-container"]',
       '[data-testid="image-thumb"]',
       '[data-testid="video-thumb"]',
-      '[data-testid="media-viewer"]',
-      'div[role="button"] img[src]',
+      '[data-testid="document-thumb"]',
+      '[data-testid="audio-player"]',
       'video[src]',
       'audio[src]',
       'a[download]'
     ];
 
-    root.querySelectorAll(selectors.join(',')).forEach((node) => {
-      const container = node.closest('div') || node.parentElement;
-      if (container) {
-        attachDownloadButton(container);
-      }
+    const nodes = root.querySelectorAll ? root.querySelectorAll(selectors.join(',')) : [];
+    nodes.forEach((node) => {
+      attachDownloadButton(node);
     });
   }
 
+  let scanScheduled = false;
+  function scheduledScan() {
+    if (scanScheduled) return;
+    scanScheduled = true;
+    requestAnimationFrame(() => {
+      scanForMediaContainers();
+      ensureBulkButton();
+      scanScheduled = false;
+    });
+  }
+
+  // Initial scan
   scanForMediaContainers();
   ensureBulkButton();
 
+  // Observer with debouncing
   const observer = new MutationObserver((entries) => {
+    let hasRelevantChanges = false;
     for (const entry of entries) {
-      for (const addedNode of entry.addedNodes) {
-        if (addedNode.nodeType === Node.ELEMENT_NODE) {
-          scanForMediaContainers(addedNode);
-        }
+      if (entry.addedNodes.length > 0) {
+        hasRelevantChanges = true;
+        break;
       }
     }
-    ensureBulkButton();
+    if (hasRelevantChanges) {
+      scheduledScan();
+    }
   });
 
   observer.observe(document.body, {
@@ -388,15 +482,27 @@
     subtree: true
   });
 
-  // Messaging: respond to popup requests for scanning and downloads
+  // --- Chrome Extension Runtime Messaging ---
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-      if (msg && msg.action === 'listChats') {
+      if (!msg || !msg.action) return false;
+
+      if (msg.action === 'listChats') {
         try {
-          const nodes = Array.from(document.querySelectorAll('span[title]'))
-            .filter((n) => n && n.textContent && n.offsetParent !== null)
-            .map((n) => n.getAttribute('title') || n.textContent.trim());
-          const unique = [...new Set(nodes)].slice(0, 200);
+          // Target left side pane specifically to get actual chat thread titles
+          const sidePane = document.querySelector('#pane-side');
+          let chats = [];
+          if (sidePane) {
+            chats = Array.from(sidePane.querySelectorAll('span[title]'))
+              .map((n) => n.getAttribute('title') || n.textContent.trim())
+              .filter((t) => t && t.length > 0);
+          } else {
+            chats = Array.from(document.querySelectorAll('span[title]'))
+              .filter((n) => n && n.offsetParent !== null)
+              .map((n) => n.getAttribute('title') || n.textContent.trim());
+          }
+          const unique = [...new Set(chats)].slice(0, 150);
           sendResponse({ chats: unique });
         } catch (err) {
           sendResponse({ chats: [] });
@@ -404,14 +510,15 @@
         return true;
       }
 
-      if (msg && msg.action === 'selectChat') {
+      if (msg.action === 'selectChat') {
         const title = msg.title || '';
         try {
-          const candidates = Array.from(document.querySelectorAll('span[title]'))
-            .filter((n) => n && (n.getAttribute('title') === title || n.textContent.trim() === title));
+          const sidePane = document.querySelector('#pane-side') || document;
+          const candidates = Array.from(sidePane.querySelectorAll('span[title]')).filter(
+            (n) => n && (n.getAttribute('title') === title || n.textContent.trim() === title)
+          );
           if (candidates.length) {
-            const node = candidates[0];
-            const clickable = node.closest('div[role="button"], div[role="row"], li, div');
+            const clickable = candidates[0].closest('div[role="row"], div[role="button"], li');
             if (clickable) {
               clickable.click();
               sendResponse({ ok: true });
@@ -425,13 +532,13 @@
         return true;
       }
 
-      if (msg && msg.action === 'scan') {
+      if (msg.action === 'scan') {
         const items = collectMediaTargets();
         sendResponse({ count: items.length });
         return true;
       }
 
-      if (msg && msg.action === 'download') {
+      if (msg.action === 'download') {
         const filters = msg.filters || {};
         let items = collectMediaTargets();
         items = items.filter((it) => {
@@ -450,12 +557,12 @@
           for (let i = 0; i < toProcess.length; i++) {
             const it = toProcess[i];
             try {
-              await downloadUrl(it.url, it.extension || 'bin');
+              await triggerDownload(it);
               chrome.runtime.sendMessage({ action: 'log', text: `Saved ${i + 1}/${toProcess.length} ${it.type}` });
             } catch (err) {
-              chrome.runtime.sendMessage({ action: 'log', text: `Failed ${i + 1}: ${err && err.message ? err.message : err}` });
+              chrome.runtime.sendMessage({ action: 'log', text: `Failed ${i + 1}: ${err?.message || err}` });
             }
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, 200));
           }
           chrome.runtime.sendMessage({ action: 'done', count: toProcess.length });
         })();

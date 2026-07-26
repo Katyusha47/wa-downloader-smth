@@ -4,8 +4,8 @@
   "description": "Open-source clone-style Chrome extension for downloading WhatsApp Web media.",
   "main": "content.js",
   "scripts": {
-    "test": "node --check content.js",
-    "lint": "node --check content.js"
+    "test": "node --check content.js && node --check popup.js && node --check background.js",
+    "lint": "node --check content.js && node --check popup.js && node --check background.js"
   },
   "repository": {
     "type": "git",

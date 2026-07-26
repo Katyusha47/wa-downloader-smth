@@ -7,13 +7,18 @@
     "default_title": "WA Media Downloader",
     "default_popup": "popup.html"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "permissions": [
     "activeTab",
     "tabs",
-    "scripting"
+    "scripting",
+    "downloads"
   ],
   "host_permissions": [
-    "https://web.whatsapp.com/*"
+    "https://web.whatsapp.com/*",
+    "https://*.whatsapp.net/*"
   ],
   "content_scripts": [
     {
