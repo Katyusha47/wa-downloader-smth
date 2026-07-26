@@ -5,6 +5,15 @@
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
 
+  // Helper to check if extension context is valid
+  function isExtensionContextValid() {
+    try {
+      return typeof chrome !== 'undefined' && Boolean(chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
   // --- Strict Filtering Helpers ---
 
   function isAvatarOrProfile(node) {
@@ -263,36 +272,62 @@
 
     const target = await obtainHighResTarget(rawTarget);
     const downloadUrl = await prepareUrlForDownload(target.url);
+    const safeFilename = target.filename || formatTimestampFilename('wa-media', target.extension || 'bin');
 
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    // Safe background service worker download with fallback
+    if (isExtensionContextValid()) {
       return new Promise((resolve) => {
-        chrome.runtime.sendMessage(
-          {
-            action: 'downloadMedia',
-            url: downloadUrl,
-            filename: target.filename || formatTimestampFilename('wa-media', target.extension || 'bin')
-          },
-          (response) => {
-            if (chrome.runtime.lastError || !response || !response.ok) {
-              fallbackAnchorDownload(downloadUrl, target.filename || formatTimestampFilename('wa-media', target.extension));
+        try {
+          chrome.runtime.sendMessage(
+            {
+              action: 'downloadMedia',
+              url: downloadUrl,
+              filename: safeFilename
+            },
+            (response) => {
+              if (chrome.runtime.lastError || !response || !response.ok) {
+                fallbackAnchorDownload(downloadUrl, safeFilename);
+              }
+              resolve();
             }
-            resolve();
-          }
-        );
+          );
+        } catch (err) {
+          // Extension context invalidated (e.g. extension was reloaded in chrome://extensions)
+          fallbackAnchorDownload(downloadUrl, safeFilename);
+          resolve();
+        }
       });
     } else {
-      fallbackAnchorDownload(downloadUrl, target.filename || formatTimestampFilename('wa-media', target.extension));
+      fallbackAnchorDownload(downloadUrl, safeFilename);
     }
   }
 
   function fallbackAnchorDownload(url, filename) {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.rel = 'noopener';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    try {
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (e) {
+      console.error('[WA Downloader] Anchor download failed:', e);
+    }
+  }
+
+  function safeSendRuntimeMessage(msg) {
+    if (isExtensionContextValid()) {
+      try {
+        chrome.runtime.sendMessage(msg, () => {
+          if (chrome.runtime.lastError) {
+            // Ignore invalidated context errors silently
+          }
+        });
+      } catch (e) {
+        // Ignore
+      }
+    }
   }
 
   // --- In-Message Download Button Injection ---
@@ -375,7 +410,6 @@
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxTimeMs) {
-      // Scroll to top to trigger loading older messages
       container.scrollTop = 0;
 
       await new Promise((r) => setTimeout(r, 450));
@@ -384,7 +418,6 @@
       if (newHeight === lastHeight) {
         sameHeightCount++;
         if (sameHeightCount >= 4) {
-          // Reached top/oldest message of chat history
           break;
         }
       } else {
@@ -394,7 +427,7 @@
     }
   }
 
-  // --- Bulk Media Collection (Oldest First -> Newest Last) ---
+  // --- Bulk Media Collection ---
 
   function collectMediaTargets() {
     const mainChat = document.querySelector('#main');
@@ -414,7 +447,6 @@
     const items = [];
     const seen = new Set();
 
-    // Querying mainChat.querySelectorAll preserves DOM document order (Oldest top to Newest bottom)
     mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
       const container = getValidMessageContainer(node);
       if (!container) return;
@@ -520,6 +552,7 @@
         const { item } = selected[i];
         try {
           await triggerDownload(item);
+          safeSendRuntimeMessage({ action: 'log', text: `Saved ${i + 1}/${selected.length} ${item.type}` });
           await new Promise((resolve) => setTimeout(resolve, 250));
         } catch (error) {
           console.error('[WA Downloader Clone] bulk download item failed', error);
@@ -527,6 +560,7 @@
       }
 
       downloadSelected.textContent = 'Done';
+      safeSendRuntimeMessage({ action: 'done', count: selected.length });
       setTimeout(() => {
         downloadSelected.disabled = false;
         downloadSelected.textContent = 'Download selected';
@@ -701,13 +735,13 @@
             const it = toProcess[i];
             try {
               await triggerDownload(it);
-              chrome.runtime.sendMessage({ action: 'log', text: `Saved ${i + 1}/${toProcess.length} ${it.type}` });
+              safeSendRuntimeMessage({ action: 'log', text: `Saved ${i + 1}/${toProcess.length} ${it.type}` });
             } catch (err) {
-              chrome.runtime.sendMessage({ action: 'log', text: `Failed ${i + 1}: ${err?.message || err}` });
+              safeSendRuntimeMessage({ action: 'log', text: `Failed ${i + 1}: ${err?.message || err}` });
             }
             await new Promise((r) => setTimeout(r, 200));
           }
-          chrome.runtime.sendMessage({ action: 'done', count: toProcess.length });
+          safeSendRuntimeMessage({ action: 'done', count: toProcess.length });
         })();
 
         return true;
