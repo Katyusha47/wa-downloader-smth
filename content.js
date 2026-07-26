@@ -39,7 +39,7 @@
     return false;
   }
 
-  // Get valid message bubble container inside the active chat message feed ONLY (#main)
+  // Get valid message bubble container inside active chat message feed ONLY (#main)
   function getValidMessageContainer(node) {
     if (!node) return null;
 
@@ -156,7 +156,6 @@
 
   // --- High-Resolution Media Capture ---
 
-  // Obtains full high-resolution image/video by opening Media Viewer if thumbnail is low-res
   async function obtainHighResTarget(target) {
     if (!target || target.type === 'document' || target.type === 'audio') {
       return target;
@@ -237,7 +236,6 @@
     return target;
   }
 
-  // Convert blob: URLs to Data URLs so background service worker can download cleanly
   async function prepareUrlForDownload(url) {
     if (url.startsWith('blob:')) {
       try {
@@ -263,7 +261,6 @@
   async function triggerDownload(rawTarget) {
     if (!rawTarget || !rawTarget.url) throw new Error('Invalid download target');
 
-    // Upgrade to high-resolution if thumbnail is low-res
     const target = await obtainHighResTarget(rawTarget);
     const downloadUrl = await prepareUrlForDownload(target.url);
 
@@ -351,7 +348,53 @@
     container.appendChild(button);
   }
 
-  // --- Bulk Media Collection (Main Chat Only) ---
+  // --- History Auto-Scroll Engine ---
+
+  function getChatScrollContainer() {
+    const mainChat = document.querySelector('#main');
+    if (!mainChat) return null;
+
+    const candidates = Array.from(mainChat.querySelectorAll('div'));
+    for (const el of candidates) {
+      if (el.scrollHeight > el.clientHeight && el.clientHeight > 200) {
+        const overflowY = getComputedStyle(el).overflowY;
+        if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+          return el;
+        }
+      }
+    }
+    return mainChat.querySelector('div[tabindex="-1"]') || mainChat;
+  }
+
+  async function scrollAndLoadHistory(maxTimeMs = 25000) {
+    const container = getChatScrollContainer();
+    if (!container) return;
+
+    let lastHeight = container.scrollHeight;
+    let sameHeightCount = 0;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxTimeMs) {
+      // Scroll to top to trigger loading older messages
+      container.scrollTop = 0;
+
+      await new Promise((r) => setTimeout(r, 450));
+
+      const newHeight = container.scrollHeight;
+      if (newHeight === lastHeight) {
+        sameHeightCount++;
+        if (sameHeightCount >= 4) {
+          // Reached top/oldest message of chat history
+          break;
+        }
+      } else {
+        sameHeightCount = 0;
+        lastHeight = newHeight;
+      }
+    }
+  }
+
+  // --- Bulk Media Collection (Oldest First -> Newest Last) ---
 
   function collectMediaTargets() {
     const mainChat = document.querySelector('#main');
@@ -371,6 +414,7 @@
     const items = [];
     const seen = new Set();
 
+    // Querying mainChat.querySelectorAll preserves DOM document order (Oldest top to Newest bottom)
     mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
       const container = getValidMessageContainer(node);
       if (!container) return;
@@ -392,7 +436,7 @@
 
   function getLabel(item, index) {
     const nameStr = item.filename ? ` (${item.filename})` : '';
-    return `${item.type.toUpperCase()} ${index + 1} · ${item.extension}${nameStr}`;
+    return `#${index + 1} · ${item.type.toUpperCase()} · ${item.extension}${nameStr}`;
   }
 
   function renderBulkPanel(items) {
@@ -406,7 +450,7 @@
     panel.className = BULK_PANEL_CLASS;
 
     const title = document.createElement('h3');
-    title.textContent = `Bulk download (${items.length} group chat items)`;
+    title.textContent = `Bulk download (${items.length} items: oldest to newest)`;
 
     const actions = document.createElement('div');
     actions.className = 'wmdc-bulk-actions';
@@ -494,7 +538,6 @@
   }
 
   function ensureBulkButton() {
-    // Only show Bulk media button if inside an active main chat
     const mainChat = document.querySelector('#main');
     if (!mainChat) {
       document.querySelector(`.${BULK_BUTTON_CLASS}`)?.remove();
@@ -510,7 +553,7 @@
     button.className = BULK_BUTTON_CLASS;
     button.textContent = 'Bulk media';
 
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const items = collectMediaTargets();
       if (!items.length) {
         button.textContent = 'No media found';
@@ -627,8 +670,14 @@
       }
 
       if (msg.action === 'scan') {
-        const items = collectMediaTargets();
-        sendResponse({ count: items.length });
+        (async () => {
+          if (msg.deepScan) {
+            await scrollAndLoadHistory();
+          }
+          scanForMediaContainers();
+          const items = collectMediaTargets();
+          sendResponse({ count: items.length });
+        })();
         return true;
       }
 

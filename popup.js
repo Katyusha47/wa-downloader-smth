@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadBtn = document.getElementById('downloadBtn');
   const logEl = document.getElementById('log');
   const chatSelect = document.getElementById('chatSelect');
+  const optDeepScan = document.getElementById('optDeepScan');
 
   function log(msg) {
     if (!logEl) return;
@@ -75,14 +76,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function triggerScan() {
-    log('Scanning active chat for downloadable media...');
-    sendMessageToWhatsapp({ action: 'scan' }, (resp) => {
+    const isDeep = optDeepScan ? optDeepScan.checked : false;
+    if (isDeep) {
+      log('Starting Deep Scan (scrolling chat history from oldest to newest)...');
+    } else {
+      log('Scanning active chat for media...');
+    }
+
+    if (updateBtn) updateBtn.disabled = true;
+
+    sendMessageToWhatsapp({ action: 'scan', deepScan: isDeep }, (resp) => {
+      if (updateBtn) updateBtn.disabled = false;
       if (!resp) {
         log('No active WhatsApp Web tab found. Please open web.whatsapp.com.');
         if (downloadBtn) downloadBtn.disabled = true;
         return;
       }
-      log(`Found ${resp.count} media items in active chat`);
+      log(`Scan complete: Found ${resp.count} media items in chat history (oldest to newest).`);
       if (downloadBtn) downloadBtn.disabled = resp.count === 0;
     });
   }
@@ -114,8 +124,8 @@ document.addEventListener('DOMContentLoaded', () => {
         documents: document.getElementById('optDocs')?.checked ?? true
       };
 
-      log('Starting download process...');
-      const payload = { action: 'download', filters, limit: 200 };
+      log('Starting batch download process...');
+      const payload = { action: 'download', filters, limit: 300 };
       if (chatSelect && chatSelect.value) payload.chat = chatSelect.value;
 
       sendMessageToWhatsapp(payload, (resp) => {
