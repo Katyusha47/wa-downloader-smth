@@ -5,18 +5,22 @@
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
 
-  // --- Filtering & Validation Helpers ---
+  // --- Strict Filtering Helpers ---
 
-  function isIgnoredImage(img) {
-    if (!img) return true;
-    const src = img.currentSrc || img.src || '';
-    if (!src) return true;
+  function isAvatarOrProfile(node) {
+    if (!node) return true;
 
-    // Filter out emojis, avatars, stickers, reactions, inline SVGs
+    // Reject elements inside avatars, profile pictures, headers, or side panels
+    const avatarContainer = node.closest(
+      '[data-testid="avatar"], [data-testid="cell-frame-icon"], [data-testid="group-chat-profile-picture"], [data-testid="profile-picture"], header, #pane-side'
+    );
+    if (avatarContainer) return true;
+
+    const src = node.currentSrc || node.src || node.href || '';
     if (
-      src.includes('/emoji/') ||
       src.includes('pps.whatsapp.net') ||
       src.includes('/pps/') ||
+      src.includes('/emoji/') ||
       src.includes('data:image/svg+xml') ||
       src.includes('data:image/gif') ||
       src.includes('sticker') ||
@@ -25,19 +29,38 @@
       return true;
     }
 
-    // Ignore tiny images (avatars, icons, reaction badges)
-    const width = img.naturalWidth || img.width || img.clientWidth || 0;
-    const height = img.naturalHeight || img.height || img.clientHeight || 0;
-    if ((width > 0 && width < 60) || (height > 0 && height < 60)) {
-      return true;
-    }
-
-    // Ignore images inside header, status bar, or side pane
-    if (img.closest('#pane-side') || img.closest('header')) {
+    // Ignore tiny images (avatars, icons, badges)
+    const width = node.naturalWidth || node.width || node.clientWidth || 0;
+    const height = node.naturalHeight || node.height || node.clientHeight || 0;
+    if ((width > 0 && width < 50) || (height > 0 && height < 50)) {
       return true;
     }
 
     return false;
+  }
+
+  // Get valid message bubble container inside the active chat message feed ONLY (#main)
+  function getValidMessageContainer(node) {
+    if (!node) return null;
+
+    // Must be inside #main (active chat area)
+    const mainChat = node.closest('#main');
+    if (!mainChat) return null;
+
+    // Must NOT be inside header, input bar, or control toolbar
+    if (node.closest('header, footer, [data-testid="chat-controls"]')) return null;
+
+    // Must NOT be an avatar or profile picture
+    if (isAvatarOrProfile(node)) return null;
+
+    // Must be inside a message row / bubble
+    const msgContainer = node.closest('[data-testid="msg-container"], div[role="row"], div[data-id]');
+    if (!msgContainer) return null;
+
+    // Ensure container itself is not part of header or avatar list
+    if (msgContainer.closest('header')) return null;
+
+    return msgContainer;
   }
 
   function getExtensionFromUrl(url, fallback = 'bin') {
@@ -53,9 +76,7 @@
     return `${prefix}-${stamp}.${ext}`;
   }
 
-  // Extract original document or media filename from DOM
   function extractFilenameFromContainer(container, defaultExt) {
-    // Check for document title/name in text elements inside document card
     const titleEl = container.querySelector('[title*="."], span[dir="auto"][title], [data-testid="document-thumb"] + div span');
     if (titleEl) {
       const name = titleEl.getAttribute('title') || titleEl.textContent?.trim();
@@ -63,18 +84,7 @@
         return name.replace(/[/\\?%*:|"<>]/g, '_');
       }
     }
-    return formatTimestampFilename('wa-media', defaultExt);
-  }
-
-  // Locate the actual WhatsApp Web message bubble container
-  function getMessageBubbleContainer(node) {
-    if (!node) return null;
-    return (
-      node.closest('[data-testid="msg-container"]') ||
-      node.closest('div[role="row"]') ||
-      node.closest('.message-in, .message-out') ||
-      node.parentElement
-    );
+    return formatTimestampFilename('wa-doc', defaultExt);
   }
 
   // --- Target Extraction ---
@@ -91,7 +101,8 @@
           url: src,
           extension: 'mp4',
           type: 'video',
-          filename: formatTimestampFilename('wa-video', 'mp4')
+          filename: formatTimestampFilename('wa-video', 'mp4'),
+          container
         };
       }
     }
@@ -105,7 +116,8 @@
           url: src,
           extension: 'mp3',
           type: 'audio',
-          filename: formatTimestampFilename('wa-audio', 'mp3')
+          filename: formatTimestampFilename('wa-audio', 'mp3'),
+          container
         };
       }
     }
@@ -119,12 +131,13 @@
         url: docLink.href,
         extension: ext,
         type: 'document',
-        filename
+        filename,
+        container
       };
     }
 
     // 4. Image
-    const images = Array.from(container.querySelectorAll('img[src]')).filter((img) => !isIgnoredImage(img));
+    const images = Array.from(container.querySelectorAll('img[src]')).filter((img) => !isAvatarOrProfile(img));
     if (images.length > 0) {
       const image = images[0];
       const src = image.currentSrc || image.src;
@@ -133,14 +146,98 @@
         url: src,
         extension: ext,
         type: 'image',
-        filename: formatTimestampFilename('wa-image', ext)
+        filename: formatTimestampFilename('wa-image', ext),
+        container
       };
     }
 
     return null;
   }
 
-  // Convert blob: URLs to Data URLs so service worker / background script can download them cleanly
+  // --- High-Resolution Media Capture ---
+
+  // Obtains full high-resolution image/video by opening Media Viewer if thumbnail is low-res
+  async function obtainHighResTarget(target) {
+    if (!target || target.type === 'document' || target.type === 'audio') {
+      return target;
+    }
+
+    const container = target.container;
+    if (!container) return target;
+
+    // Check if image is already high resolution (naturalWidth >= 600)
+    if (target.type === 'image') {
+      const imgEl = container.querySelector('img[src]');
+      if (imgEl && (imgEl.naturalWidth >= 600 || imgEl.width >= 600)) {
+        return target;
+      }
+    }
+
+    // Check if Media Viewer is already open
+    let mediaViewer = document.querySelector('[data-testid="media-viewer"], div[role="dialog"]');
+    if (mediaViewer) {
+      const highResImg = mediaViewer.querySelector('img[src]');
+      const highResVideo = mediaViewer.querySelector('video[src]');
+      if (target.type === 'image' && highResImg && highResImg.src) {
+        return { ...target, url: highResImg.currentSrc || highResImg.src };
+      }
+      if (target.type === 'video' && highResVideo && (highResVideo.currentSrc || highResVideo.src)) {
+        return { ...target, url: highResVideo.currentSrc || highResVideo.src };
+      }
+    }
+
+    // Trigger WhatsApp Media Viewer by clicking thumbnail
+    const clickTarget = container.querySelector(
+      '[data-testid="image-thumb"], [data-testid="video-thumb"], div[role="button"] img, div[role="button"] video'
+    ) || container.querySelector('img, video');
+
+    if (!clickTarget) return target;
+
+    try {
+      clickTarget.click();
+
+      let fullUrl = null;
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 40));
+        mediaViewer = document.querySelector('[data-testid="media-viewer"], div[role="dialog"]');
+        if (mediaViewer) {
+          if (target.type === 'image') {
+            const img = mediaViewer.querySelector('img[src]');
+            if (img && img.src && !img.src.includes('data:image')) {
+              fullUrl = img.currentSrc || img.src;
+              break;
+            }
+          } else if (target.type === 'video') {
+            const vid = mediaViewer.querySelector('video[src]');
+            if (vid && (vid.currentSrc || vid.src)) {
+              fullUrl = vid.currentSrc || vid.src;
+              break;
+            }
+          }
+        }
+      }
+
+      // Close Media Viewer
+      const closeBtn = document.querySelector(
+        '[data-testid="btn-close"], [data-testid="media-viewer-close"], [aria-label="Close"], button[title="Close"]'
+      );
+      if (closeBtn) {
+        closeBtn.click();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      }
+
+      if (fullUrl) {
+        return { ...target, url: fullUrl };
+      }
+    } catch (err) {
+      console.warn('[WA Downloader] Media Viewer capture fallback:', err);
+    }
+
+    return target;
+  }
+
+  // Convert blob: URLs to Data URLs so background service worker can download cleanly
   async function prepareUrlForDownload(url) {
     if (url.startsWith('blob:')) {
       try {
@@ -154,7 +251,7 @@
           reader.readAsDataURL(blob);
         });
       } catch (err) {
-        console.warn('[WA Downloader] Fallback to direct blob URL due to fetch error:', err);
+        console.warn('[WA Downloader] Fallback to direct URL:', err);
         return url;
       }
     }
@@ -163,14 +260,15 @@
 
   // --- Download Execution ---
 
-  async function triggerDownload(target) {
-    if (!target || !target.url) throw new Error('Invalid download target');
+  async function triggerDownload(rawTarget) {
+    if (!rawTarget || !rawTarget.url) throw new Error('Invalid download target');
 
+    // Upgrade to high-resolution if thumbnail is low-res
+    const target = await obtainHighResTarget(rawTarget);
     const downloadUrl = await prepareUrlForDownload(target.url);
 
-    // Try background service worker download first
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         chrome.runtime.sendMessage(
           {
             action: 'downloadMedia',
@@ -179,13 +277,9 @@
           },
           (response) => {
             if (chrome.runtime.lastError || !response || !response.ok) {
-              const errMsg = chrome.runtime.lastError?.message || response?.error || 'Background download failed';
-              // Fallback to dynamic anchor click
               fallbackAnchorDownload(downloadUrl, target.filename || formatTimestampFilename('wa-media', target.extension));
-              resolve();
-            } else {
-              resolve();
             }
+            resolve();
           }
         );
       });
@@ -207,7 +301,7 @@
   // --- In-Message Download Button Injection ---
 
   function attachDownloadButton(node) {
-    const container = getMessageBubbleContainer(node);
+    const container = getValidMessageContainer(node);
     if (!container || container.querySelector(`.${BUTTON_CLASS}`)) {
       return;
     }
@@ -257,36 +351,32 @@
     container.appendChild(button);
   }
 
-  // --- Bulk Download Capabilities ---
-
-  function getChatRoot() {
-    return document.querySelector('#main') || document.body;
-  }
+  // --- Bulk Media Collection (Main Chat Only) ---
 
   function collectMediaTargets() {
-    const root = getChatRoot();
+    const mainChat = document.querySelector('#main');
+    if (!mainChat) return [];
+
     const selectors = [
-      'img[src]',
-      'video[src], video source[src]',
-      'audio[src], audio source[src], [data-testid="audio-player"] audio',
-      'a[href][download]',
-      'a[href*="blob:"]',
-      'a[href*="mmg.whatsapp.net"]'
+      '[data-testid="msg-container"]',
+      '[data-testid="image-thumb"]',
+      '[data-testid="video-thumb"]',
+      '[data-testid="document-thumb"]',
+      '[data-testid="audio-player"]',
+      'video[src]',
+      'audio[src]',
+      'a[download]'
     ];
 
     const items = [];
     const seen = new Set();
 
-    root.querySelectorAll(selectors.join(',')).forEach((node) => {
-      if (node.tagName === 'IMG' && isIgnoredImage(node)) {
-        return;
-      }
+    mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
+      const container = getValidMessageContainer(node);
+      if (!container) return;
 
-      const container = getMessageBubbleContainer(node);
-      const target = getDownloadTarget(container || node);
-      if (!target || !target.url || seen.has(target.url)) {
-        return;
-      }
+      const target = getDownloadTarget(container);
+      if (!target || !target.url || seen.has(target.url)) return;
 
       seen.add(target.url);
       items.push(target);
@@ -316,7 +406,7 @@
     panel.className = BULK_PANEL_CLASS;
 
     const title = document.createElement('h3');
-    title.textContent = `Bulk download (${items.length} items found)`;
+    title.textContent = `Bulk download (${items.length} group chat items)`;
 
     const actions = document.createElement('div');
     actions.className = 'wmdc-bulk-actions';
@@ -386,7 +476,7 @@
         const { item } = selected[i];
         try {
           await triggerDownload(item);
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 250));
         } catch (error) {
           console.error('[WA Downloader Clone] bulk download item failed', error);
         }
@@ -404,6 +494,13 @@
   }
 
   function ensureBulkButton() {
+    // Only show Bulk media button if inside an active main chat
+    const mainChat = document.querySelector('#main');
+    if (!mainChat) {
+      document.querySelector(`.${BULK_BUTTON_CLASS}`)?.remove();
+      return;
+    }
+
     if (document.querySelector(`.${BULK_BUTTON_CLASS}`)) {
       return;
     }
@@ -428,9 +525,12 @@
     document.body.appendChild(button);
   }
 
-  // --- Scanning & Observer (Debounced for performance) ---
+  // --- Observer & Debounced Scanning ---
 
-  function scanForMediaContainers(root = document) {
+  function scanForMediaContainers() {
+    const mainChat = document.querySelector('#main');
+    if (!mainChat) return;
+
     const selectors = [
       '[data-testid="msg-container"]',
       '[data-testid="image-thumb"]',
@@ -442,8 +542,7 @@
       'a[download]'
     ];
 
-    const nodes = root.querySelectorAll ? root.querySelectorAll(selectors.join(',')) : [];
-    nodes.forEach((node) => {
+    mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
       attachDownloadButton(node);
     });
   }
@@ -463,7 +562,7 @@
   scanForMediaContainers();
   ensureBulkButton();
 
-  // Observer with debouncing
+  // Observer
   const observer = new MutationObserver((entries) => {
     let hasRelevantChanges = false;
     for (const entry of entries) {
@@ -482,7 +581,7 @@
     subtree: true
   });
 
-  // --- Chrome Extension Runtime Messaging ---
+  // --- Extension Runtime Messaging ---
 
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -490,17 +589,12 @@
 
       if (msg.action === 'listChats') {
         try {
-          // Target left side pane specifically to get actual chat thread titles
           const sidePane = document.querySelector('#pane-side');
           let chats = [];
           if (sidePane) {
             chats = Array.from(sidePane.querySelectorAll('span[title]'))
               .map((n) => n.getAttribute('title') || n.textContent.trim())
               .filter((t) => t && t.length > 0);
-          } else {
-            chats = Array.from(document.querySelectorAll('span[title]'))
-              .filter((n) => n && n.offsetParent !== null)
-              .map((n) => n.getAttribute('title') || n.textContent.trim());
           }
           const unique = [...new Set(chats)].slice(0, 150);
           sendResponse({ chats: unique });
