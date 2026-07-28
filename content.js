@@ -66,7 +66,7 @@
   }
 
   function getExtensionFromUrl(url, fallback = 'bin') {
-    if (!url) return fallback;
+    if (!url || url === 'pending_doc_click') return fallback;
     const namedMatch = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(url);
     return namedMatch ? namedMatch[1].toLowerCase() : fallback;
   }
@@ -124,7 +124,7 @@
   function getDownloadTarget(container) {
     if (!container) return null;
 
-    // 1. Document attachment check (MUST be prioritized over thumbnail img tags)
+    // 1. Document attachment check
     if (isDocumentContainer(container)) {
       const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"], a[href*="blob:"]');
       const filename = extractFilenameFromContainer(container, 'pdf');
@@ -197,26 +197,26 @@
     if (!container) return target;
 
     // Check if a link with valid href already exists
-    const link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
-    if (link && link.href && !link.href.startsWith('javascript:')) {
+    let link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
+    if (link && link.href && !link.href.startsWith('javascript:') && !link.href.startsWith('about:')) {
       return { ...target, url: link.href };
     }
 
-    // Click the document download icon / button in WhatsApp Web to trigger blob creation or browser download
+    // Click the document download icon / button in WhatsApp Web to trigger blob creation
     const clickTarget =
-      container.querySelector('[data-testid="btn-download"], span[data-icon="download"], [data-testid="document-thumb"], div[role="button"]') ||
+      container.querySelector('[data-testid="btn-download"], span[data-icon="download"], span[data-icon="download-document"], [data-testid="document-thumb"], div[role="button"]') ||
       container;
 
     if (clickTarget) {
       try {
         clickTarget.click();
 
-        // Wait up to 600ms for blob/link to appear
-        for (let i = 0; i < 15; i++) {
-          await new Promise((r) => setTimeout(r, 40));
-          const newLink = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
-          if (newLink && newLink.href && !newLink.href.startsWith('javascript:')) {
-            return { ...target, url: newLink.href };
+        // Wait up to 3.5 seconds (35 * 100ms) for WhatsApp Web to fetch document blob and insert <a href="blob:...">
+        for (let i = 0; i < 35; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
+          if (link && link.href && !link.href.startsWith('javascript:') && !link.href.startsWith('about:')) {
+            return { ...target, url: link.href };
           }
         }
       } catch (err) {
@@ -337,34 +337,36 @@
     if (!rawTarget) throw new Error('Invalid download target');
 
     const target = await obtainHighResTarget(rawTarget);
+    if (!target.url || target.url === 'pending_doc_click') {
+      throw new Error(`Document blob not loaded for "${target.filename || 'Document'}". Click the document inside WhatsApp Web to download.`);
+    }
+
     const downloadUrl = await prepareUrlForDownload(target.url);
     const safeFilename = target.filename || formatTimestampFilename('wa-media', target.extension || 'bin');
 
-    if (downloadUrl && downloadUrl !== 'pending_doc_click') {
-      if (isExtensionContextValid()) {
-        return new Promise((resolve) => {
-          try {
-            chrome.runtime.sendMessage(
-              {
-                action: 'downloadMedia',
-                url: downloadUrl,
-                filename: safeFilename
-              },
-              (response) => {
-                if (chrome.runtime.lastError || !response || !response.ok) {
-                  fallbackAnchorDownload(downloadUrl, safeFilename);
-                }
-                resolve();
+    if (isExtensionContextValid()) {
+      return new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage(
+            {
+              action: 'downloadMedia',
+              url: downloadUrl,
+              filename: safeFilename
+            },
+            (response) => {
+              if (chrome.runtime.lastError || !response || !response.ok) {
+                fallbackAnchorDownload(downloadUrl, safeFilename);
               }
-            );
-          } catch (err) {
-            fallbackAnchorDownload(downloadUrl, safeFilename);
-            resolve();
-          }
-        });
-      } else {
-        fallbackAnchorDownload(downloadUrl, safeFilename);
-      }
+              resolve();
+            }
+          );
+        } catch (err) {
+          fallbackAnchorDownload(downloadUrl, safeFilename);
+          resolve();
+        }
+      });
+    } else {
+      fallbackAnchorDownload(downloadUrl, safeFilename);
     }
   }
 
@@ -627,6 +629,7 @@
           await new Promise((resolve) => setTimeout(resolve, 250));
         } catch (error) {
           console.error('[WA Downloader Clone] bulk download item failed', error);
+          safeSendRuntimeMessage({ action: 'log', text: `Failed ${i + 1}: ${error?.message || error}` });
         }
       }
 
