@@ -5,6 +5,8 @@
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
 
+  const DOC_EXT_REGEX = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|apk|epub|json|xml|mp3|wav|tar|gz|odt)$/i;
+
   // Helper to check if extension context is valid
   function isExtensionContextValid() {
     try {
@@ -19,7 +21,6 @@
   function isAvatarOrProfile(node) {
     if (!node) return true;
 
-    // Reject elements inside avatars, profile pictures, headers, or side panels
     const avatarContainer = node.closest(
       '[data-testid="avatar"], [data-testid="cell-frame-icon"], [data-testid="group-chat-profile-picture"], [data-testid="profile-picture"], header, #pane-side'
     );
@@ -38,7 +39,6 @@
       return true;
     }
 
-    // Ignore tiny images (avatars, icons, badges)
     const width = node.naturalWidth || node.width || node.clientWidth || 0;
     const height = node.naturalHeight || node.height || node.clientHeight || 0;
     if ((width > 0 && width < 50) || (height > 0 && height < 50)) {
@@ -52,21 +52,14 @@
   function getValidMessageContainer(node) {
     if (!node) return null;
 
-    // Must be inside #main (active chat area)
     const mainChat = node.closest('#main');
     if (!mainChat) return null;
 
-    // Must NOT be inside header, input bar, or control toolbar
     if (node.closest('header, footer, [data-testid="chat-controls"]')) return null;
-
-    // Must NOT be an avatar or profile picture
     if (isAvatarOrProfile(node)) return null;
 
-    // Must be inside a message row / bubble
     const msgContainer = node.closest('[data-testid="msg-container"], div[role="row"], div[data-id]');
     if (!msgContainer) return null;
-
-    // Ensure container itself is not part of header or avatar list
     if (msgContainer.closest('header')) return null;
 
     return msgContainer;
@@ -85,8 +78,8 @@
     return `${prefix}-${stamp}.${ext}`;
   }
 
-  function extractFilenameFromContainer(container, defaultExt) {
-    const titleEl = container.querySelector('[title*="."], span[dir="auto"][title], [data-testid="document-thumb"] + div span');
+  function extractFilenameFromContainer(container, defaultExt = 'pdf') {
+    const titleEl = container.querySelector('[title*="."], span[dir="auto"][title], [data-testid="document-thumb"] + div span, span[title]');
     if (titleEl) {
       const name = titleEl.getAttribute('title') || titleEl.textContent?.trim();
       if (name && name.includes('.')) {
@@ -101,7 +94,29 @@
   function getDownloadTarget(container) {
     if (!container) return null;
 
-    // 1. Video
+    // 1. Document attachment check (explicit testid or filename extension match)
+    const isDocThumb = Boolean(container.querySelector('[data-testid="document-thumb"], span[data-icon="download-document"]'));
+    const docTitleNode = Array.from(container.querySelectorAll('span[title], span[dir="auto"]')).find((el) => {
+      const txt = el.getAttribute('title') || el.textContent || '';
+      return DOC_EXT_REGEX.test(txt);
+    });
+
+    if (isDocThumb || docTitleNode) {
+      const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"], a[href*="blob:"]');
+      const filename = extractFilenameFromContainer(container, 'pdf');
+      const extMatch = DOC_EXT_REGEX.exec(filename);
+      const ext = extMatch ? extMatch[1].toLowerCase() : getExtensionFromUrl(docLink?.href, 'pdf');
+
+      return {
+        url: docLink?.href || 'pending_doc_click',
+        extension: ext,
+        type: 'document',
+        filename,
+        container
+      };
+    }
+
+    // 2. Video
     const video = container.querySelector('video[src], video source[src]');
     if (video) {
       const src = video.currentSrc || video.src;
@@ -116,7 +131,7 @@
       }
     }
 
-    // 2. Audio / Voice Note
+    // 3. Audio / Voice Note
     const audio = container.querySelector('audio[src], audio source[src], [data-testid="audio-player"] audio');
     if (audio) {
       const src = audio.currentSrc || audio.src;
@@ -129,20 +144,6 @@
           container
         };
       }
-    }
-
-    // 3. Document attachment
-    const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"]');
-    if (docLink && docLink.href) {
-      const ext = getExtensionFromUrl(docLink.href, 'pdf');
-      const filename = extractFilenameFromContainer(container, ext);
-      return {
-        url: docLink.href,
-        extension: ext,
-        type: 'document',
-        filename,
-        container
-      };
     }
 
     // 4. Image
@@ -163,17 +164,59 @@
     return null;
   }
 
-  // --- High-Resolution Media Capture ---
+  // --- Document & High-Resolution Media Capture ---
+
+  async function obtainDocumentTarget(target) {
+    if (!target || target.type !== 'document') return target;
+
+    const container = target.container;
+    if (!container) return target;
+
+    // Check if a link with valid href already exists
+    const link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
+    if (link && link.href && !link.href.startsWith('javascript:')) {
+      return { ...target, url: link.href };
+    }
+
+    // Click the document download icon / button in WhatsApp Web to trigger blob creation or browser download
+    const clickTarget =
+      container.querySelector('[data-testid="btn-download"], span[data-icon="download"], [data-testid="document-thumb"], div[role="button"]') ||
+      container;
+
+    if (clickTarget) {
+      try {
+        clickTarget.click();
+
+        // Wait up to 600ms for blob/link to appear
+        for (let i = 0; i < 15; i++) {
+          await new Promise((r) => setTimeout(r, 40));
+          const newLink = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
+          if (newLink && newLink.href && !newLink.href.startsWith('javascript:')) {
+            return { ...target, url: newLink.href };
+          }
+        }
+      } catch (err) {
+        console.warn('[WA Downloader] Document click trigger fallback:', err);
+      }
+    }
+
+    return target;
+  }
 
   async function obtainHighResTarget(target) {
-    if (!target || target.type === 'document' || target.type === 'audio') {
+    if (!target) return target;
+
+    if (target.type === 'document') {
+      return await obtainDocumentTarget(target);
+    }
+
+    if (target.type === 'audio') {
       return target;
     }
 
     const container = target.container;
     if (!container) return target;
 
-    // Check if image is already high resolution (naturalWidth >= 600)
     if (target.type === 'image') {
       const imgEl = container.querySelector('img[src]');
       if (imgEl && (imgEl.naturalWidth >= 600 || imgEl.width >= 600)) {
@@ -181,7 +224,6 @@
       }
     }
 
-    // Check if Media Viewer is already open
     let mediaViewer = document.querySelector('[data-testid="media-viewer"], div[role="dialog"]');
     if (mediaViewer) {
       const highResImg = mediaViewer.querySelector('img[src]');
@@ -194,10 +236,9 @@
       }
     }
 
-    // Trigger WhatsApp Media Viewer by clicking thumbnail
-    const clickTarget = container.querySelector(
-      '[data-testid="image-thumb"], [data-testid="video-thumb"], div[role="button"] img, div[role="button"] video'
-    ) || container.querySelector('img, video');
+    const clickTarget =
+      container.querySelector('[data-testid="image-thumb"], [data-testid="video-thumb"], div[role="button"] img, div[role="button"] video') ||
+      container.querySelector('img, video');
 
     if (!clickTarget) return target;
 
@@ -225,7 +266,6 @@
         }
       }
 
-      // Close Media Viewer
       const closeBtn = document.querySelector(
         '[data-testid="btn-close"], [data-testid="media-viewer-close"], [aria-label="Close"], button[title="Close"]'
       );
@@ -246,6 +286,8 @@
   }
 
   async function prepareUrlForDownload(url) {
+    if (!url || url === 'pending_doc_click') return url;
+
     if (url.startsWith('blob:')) {
       try {
         const response = await fetch(url);
@@ -268,37 +310,37 @@
   // --- Download Execution ---
 
   async function triggerDownload(rawTarget) {
-    if (!rawTarget || !rawTarget.url) throw new Error('Invalid download target');
+    if (!rawTarget) throw new Error('Invalid download target');
 
     const target = await obtainHighResTarget(rawTarget);
     const downloadUrl = await prepareUrlForDownload(target.url);
     const safeFilename = target.filename || formatTimestampFilename('wa-media', target.extension || 'bin');
 
-    // Safe background service worker download with fallback
-    if (isExtensionContextValid()) {
-      return new Promise((resolve) => {
-        try {
-          chrome.runtime.sendMessage(
-            {
-              action: 'downloadMedia',
-              url: downloadUrl,
-              filename: safeFilename
-            },
-            (response) => {
-              if (chrome.runtime.lastError || !response || !response.ok) {
-                fallbackAnchorDownload(downloadUrl, safeFilename);
+    if (downloadUrl && downloadUrl !== 'pending_doc_click') {
+      if (isExtensionContextValid()) {
+        return new Promise((resolve) => {
+          try {
+            chrome.runtime.sendMessage(
+              {
+                action: 'downloadMedia',
+                url: downloadUrl,
+                filename: safeFilename
+              },
+              (response) => {
+                if (chrome.runtime.lastError || !response || !response.ok) {
+                  fallbackAnchorDownload(downloadUrl, safeFilename);
+                }
+                resolve();
               }
-              resolve();
-            }
-          );
-        } catch (err) {
-          // Extension context invalidated (e.g. extension was reloaded in chrome://extensions)
-          fallbackAnchorDownload(downloadUrl, safeFilename);
-          resolve();
-        }
-      });
-    } else {
-      fallbackAnchorDownload(downloadUrl, safeFilename);
+            );
+          } catch (err) {
+            fallbackAnchorDownload(downloadUrl, safeFilename);
+            resolve();
+          }
+        });
+      } else {
+        fallbackAnchorDownload(downloadUrl, safeFilename);
+      }
     }
   }
 
@@ -321,7 +363,7 @@
       try {
         chrome.runtime.sendMessage(msg, () => {
           if (chrome.runtime.lastError) {
-            // Ignore invalidated context errors silently
+            // Ignore
           }
         });
       } catch (e) {
@@ -339,7 +381,7 @@
     }
 
     const target = getDownloadTarget(container);
-    if (!target || !target.url) {
+    if (!target) {
       return;
     }
 
@@ -435,9 +477,9 @@
 
     const selectors = [
       '[data-testid="msg-container"]',
+      '[data-testid="document-thumb"]',
       '[data-testid="image-thumb"]',
       '[data-testid="video-thumb"]',
-      '[data-testid="document-thumb"]',
       '[data-testid="audio-player"]',
       'video[src]',
       'audio[src]',
@@ -452,9 +494,12 @@
       if (!container) return;
 
       const target = getDownloadTarget(container);
-      if (!target || !target.url || seen.has(target.url)) return;
+      if (!target) return;
 
-      seen.add(target.url);
+      const uniqueKey = target.filename + '_' + (target.url !== 'pending_doc_click' ? target.url : Math.random());
+      if (seen.has(uniqueKey)) return;
+
+      seen.add(uniqueKey);
       items.push(target);
     });
 
@@ -610,9 +655,9 @@
 
     const selectors = [
       '[data-testid="msg-container"]',
+      '[data-testid="document-thumb"]',
       '[data-testid="image-thumb"]',
       '[data-testid="video-thumb"]',
-      '[data-testid="document-thumb"]',
       '[data-testid="audio-player"]',
       'video[src]',
       'audio[src]',
