@@ -34,6 +34,23 @@
   transform: none;
 }
 
+/* Automatic Floating Background Indexer Badge */
+.wmdc-indexer-badge {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483645;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #081012;
+  background: rgba(37, 211, 102, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
 /* Floating bulk download trigger button */
 .wmdc-bulk-open-btn {
   position: fixed;

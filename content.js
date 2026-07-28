@@ -4,6 +4,7 @@
   const BULK_BUTTON_CLASS = 'wmdc-bulk-open-btn';
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
+  const INDEXER_BADGE_CLASS = 'wmdc-indexer-badge';
 
   const DOC_EXT_REGEX = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|apk|epub|json|xml|mp3|wav|tar|gz|odt|doc|xls|ppt)$/i;
 
@@ -14,6 +15,93 @@
     } catch (e) {
       return false;
     }
+  }
+
+  function formatDateIso(dateObj) {
+    const yyyy = dateObj.getFullYear();
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Parse various WhatsApp Web date string formats into YYYY-MM-DD
+  function parseDateStringToIso(rawDateStr) {
+    if (!rawDateStr) return formatDateIso(new Date());
+
+    const clean = rawDateStr.trim().replace(/[[\]]/g, '');
+
+    // Format: DD/MM/YYYY or D/M/YYYY
+    const dmyMatch = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(clean);
+    if (dmyMatch) {
+      const day = String(dmyMatch[1]).padStart(2, '0');
+      const month = String(dmyMatch[2]).padStart(2, '0');
+      const year = dmyMatch[3];
+      return `${year}-${month}-${day}`;
+    }
+
+    // Format: YYYY-MM-DD
+    const ymdMatch = /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$/.exec(clean);
+    if (ymdMatch) {
+      const year = ymdMatch[1];
+      const month = String(ymdMatch[2]).padStart(2, '0');
+      const day = String(ymdMatch[3]).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    // Try standard Date.parse
+    const parsed = new Date(clean);
+    if (!isNaN(parsed.getTime())) {
+      return formatDateIso(parsed);
+    }
+
+    return formatDateIso(new Date());
+  }
+
+  // Extract date from message container (data-pre-plain-text, data-id Unix timestamp, or meta)
+  function extractMessageDate(container) {
+    if (!container) return formatDateIso(new Date());
+
+    // 1. Check data-pre-plain-text attribute (e.g. "[11:45 AM, 22/07/2026] Sender:")
+    const preTextNode = container.querySelector('[data-pre-plain-text]') || container;
+    const preText = preTextNode.getAttribute('data-pre-plain-text') || '';
+    if (preText) {
+      const match = /\[[^,]+,\s*([^\]]+)\]/.exec(preText);
+      if (match) {
+        return parseDateStringToIso(match[1]);
+      }
+    }
+
+    // 2. Check data-id Unix timestamp (e.g. "false_120363..._1721644800")
+    const dataId = container.getAttribute('data-id') || container.closest('[data-id]')?.getAttribute('data-id') || '';
+    if (dataId) {
+      const tsMatch = /_(\d{10,13})(?:_|$)/.exec(dataId);
+      if (tsMatch) {
+        let ts = parseInt(tsMatch[1], 10);
+        if (ts < 10000000000) ts *= 1000;
+        const d = new Date(ts);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 2015) {
+          return formatDateIso(d);
+        }
+      }
+    }
+
+    // 3. Check for preceding date-break divider in DOM
+    let prev = container.previousElementSibling;
+    for (let i = 0; i < 10 && prev; i++) {
+      if (prev.getAttribute('data-testid') === 'date-break' || prev.querySelector('[data-testid="date-break"]')) {
+        const txt = prev.textContent?.trim();
+        if (txt) return parseDateStringToIso(txt);
+      }
+      prev = prev.previousElementSibling;
+    }
+
+    return formatDateIso(new Date());
+  }
+
+  function isDateInRange(dateStr, fromDate, toDate) {
+    if (fromDate && dateStr < fromDate) return false;
+    if (toDate && dateStr > toDate) return false;
+    return true;
   }
 
   // --- Strict Filtering Helpers ---
@@ -124,6 +212,8 @@
   function getDownloadTarget(container) {
     if (!container) return null;
 
+    const date = extractMessageDate(container);
+
     // 1. Document attachment check
     if (isDocumentContainer(container)) {
       const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"], a[href*="blob:"]');
@@ -136,6 +226,7 @@
         extension: ext,
         type: 'document',
         filename,
+        date,
         container
       };
     }
@@ -150,6 +241,7 @@
           extension: 'mp4',
           type: 'video',
           filename: formatTimestampFilename('wa-video', 'mp4'),
+          date,
           container
         };
       }
@@ -165,6 +257,7 @@
           extension: 'mp3',
           type: 'audio',
           filename: formatTimestampFilename('wa-audio', 'mp3'),
+          date,
           container
         };
       }
@@ -181,6 +274,7 @@
         extension: ext,
         type: 'image',
         filename: formatTimestampFilename('wa-image', ext),
+        date,
         container
       };
     }
@@ -196,13 +290,11 @@
     const container = target.container;
     if (!container) return target;
 
-    // Check if a link with valid href already exists
     let link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
     if (link && link.href && !link.href.startsWith('javascript:') && !link.href.startsWith('about:')) {
       return { ...target, url: link.href };
     }
 
-    // Click the document download icon / button in WhatsApp Web to trigger blob creation
     const clickTarget =
       container.querySelector('[data-testid="btn-download"], span[data-icon="download"], span[data-icon="download-document"], [data-testid="document-thumb"], div[role="button"]') ||
       container;
@@ -211,7 +303,6 @@
       try {
         clickTarget.click();
 
-        // Wait up to 3.5 seconds (35 * 100ms) for WhatsApp Web to fetch document blob and insert <a href="blob:...">
         for (let i = 0; i < 35; i++) {
           await new Promise((r) => setTimeout(r, 100));
           link = container.querySelector('a[href*="blob:"], a[href*="mmg.whatsapp.net"], a[href]');
@@ -495,9 +586,27 @@
     }
   }
 
-  // --- Bulk Media Collection ---
+  // --- Automatic Background Indexer & Floating Badge ---
 
-  function collectMediaTargets() {
+  function updateIndexerBadge(count) {
+    const mainChat = document.querySelector('#main');
+    if (!mainChat) {
+      document.querySelector(`.${INDEXER_BADGE_CLASS}`)?.remove();
+      return;
+    }
+
+    let badge = document.querySelector(`.${INDEXER_BADGE_CLASS}`);
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.className = INDEXER_BADGE_CLASS;
+      document.body.appendChild(badge);
+    }
+    badge.textContent = `WA Indexer: Active · ${count} media items indexed`;
+  }
+
+  // --- Bulk Media Collection (Date Filtered) ---
+
+  function collectMediaTargets(dateRange = {}) {
     const mainChat = document.querySelector('#main');
     if (!mainChat) return [];
 
@@ -516,6 +625,7 @@
 
     const items = [];
     const seen = new Set();
+    const { fromDate, toDate } = dateRange;
 
     mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
       const container = getValidMessageContainer(node);
@@ -524,6 +634,11 @@
       const target = getDownloadTarget(container);
       if (!target) return;
 
+      // Filter by Date Range if provided
+      if (target.date && !isDateInRange(target.date, fromDate, toDate)) {
+        return;
+      }
+
       const uniqueKey = container.getAttribute('data-id') || (target.filename + '_' + target.type);
       if (seen.has(uniqueKey)) return;
 
@@ -531,6 +646,7 @@
       items.push(target);
     });
 
+    updateIndexerBadge(items.length);
     return items;
   }
 
@@ -541,7 +657,8 @@
 
   function getLabel(item, index) {
     const nameStr = item.filename ? ` (${item.filename})` : '';
-    return `#${index + 1} · ${item.type.toUpperCase()} · ${item.extension}${nameStr}`;
+    const dateStr = item.date ? ` [${item.date}]` : '';
+    return `#${index + 1} · ${item.type.toUpperCase()}${dateStr} · ${item.extension}${nameStr}`;
   }
 
   function renderBulkPanel(items) {
@@ -698,6 +815,10 @@
     mainChat.querySelectorAll(selectors.join(',')).forEach((node) => {
       attachDownloadButton(node);
     });
+
+    // Auto-update floating indexer badge
+    const items = collectMediaTargets();
+    updateIndexerBadge(items.length);
   }
 
   let scanScheduled = false;
@@ -785,7 +906,7 @@
             await scrollAndLoadHistory();
           }
           scanForMediaContainers();
-          const items = collectMediaTargets();
+          const items = collectMediaTargets(msg.dateRange || {});
           sendResponse({ count: items.length });
         })();
         return true;
@@ -793,7 +914,8 @@
 
       if (msg.action === 'download') {
         const filters = msg.filters || {};
-        let items = collectMediaTargets();
+        const dateRange = msg.dateRange || {};
+        let items = collectMediaTargets(dateRange);
         items = items.filter((it) => {
           if (it.type === 'image' && !filters.images) return false;
           if (it.type === 'video' && !filters.video) return false;

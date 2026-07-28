@@ -20,7 +20,26 @@
         </select>
       </label>
 
-      <div class="section-title">Media Download</div>
+      <div class="section-title">Date Range Filter</div>
+
+      <div class="date-row">
+        <div class="date-field">
+          <div class="label">From</div>
+          <input type="date" id="fromDate" />
+        </div>
+        <div class="date-field">
+          <div class="label">To</div>
+          <input type="date" id="toDate" />
+        </div>
+      </div>
+
+      <div class="presets">
+        <button type="button" class="chip-btn" id="btnToday">Today</button>
+        <button type="button" class="chip-btn" id="btn7Days">7 Days</button>
+        <button type="button" class="chip-btn" id="btnAllTime">All Time</button>
+      </div>
+
+      <div class="section-title">Media Types</div>
 
       <div class="row">
         <label class="check"><input type="checkbox" id="optImages" checked /> Images</label>

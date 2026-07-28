@@ -4,12 +4,53 @@ document.addEventListener('DOMContentLoaded', () => {
   const logEl = document.getElementById('log');
   const chatSelect = document.getElementById('chatSelect');
   const optDeepScan = document.getElementById('optDeepScan');
+  const fromDateInput = document.getElementById('fromDate');
+  const toDateInput = document.getElementById('toDate');
+
+  const btnToday = document.getElementById('btnToday');
+  const btn7Days = document.getElementById('btn7Days');
+  const btnAllTime = document.getElementById('btnAllTime');
 
   function log(msg) {
     if (!logEl) return;
     const time = new Date().toLocaleTimeString();
     logEl.value += `[${time}] ${msg}\n`;
     logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function formatDateIso(dateObj) {
+    const yyyy = dateObj.getFullYear();
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Preset Handlers
+  if (btnToday) {
+    btnToday.addEventListener('click', () => {
+      const todayStr = formatDateIso(new Date());
+      if (fromDateInput) fromDateInput.value = todayStr;
+      if (toDateInput) toDateInput.value = todayStr;
+      log(`Date filter set: Today (${todayStr})`);
+    });
+  }
+
+  if (btn7Days) {
+    btn7Days.addEventListener('click', () => {
+      const now = new Date();
+      const past = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      if (fromDateInput) fromDateInput.value = formatDateIso(past);
+      if (toDateInput) toDateInput.value = formatDateIso(now);
+      log(`Date filter set: Last 7 Days (${formatDateIso(past)} to ${formatDateIso(now)})`);
+    });
+  }
+
+  if (btnAllTime) {
+    btnAllTime.addEventListener('click', () => {
+      if (fromDateInput) fromDateInput.value = '';
+      if (toDateInput) toDateInput.value = '';
+      log('Date filter cleared (All Time).');
+    });
   }
 
   function populateChats(list) {
@@ -77,24 +118,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function triggerScan() {
     const isDeep = optDeepScan ? optDeepScan.checked : false;
+    const fromDate = fromDateInput ? fromDateInput.value : '';
+    const toDate = toDateInput ? toDateInput.value : '';
+
+    let dateRangeStr = '';
+    if (fromDate || toDate) {
+      dateRangeStr = ` (${fromDate || 'Start'} to ${toDate || 'Today'})`;
+    }
+
     if (isDeep) {
-      log('Starting Deep Scan (scrolling chat history from oldest to newest)...');
+      log(`Starting Deep Scan${dateRangeStr}...`);
     } else {
-      log('Scanning active chat for media...');
+      log(`Scanning active chat media${dateRangeStr}...`);
     }
 
     if (updateBtn) updateBtn.disabled = true;
 
-    sendMessageToWhatsapp({ action: 'scan', deepScan: isDeep }, (resp) => {
-      if (updateBtn) updateBtn.disabled = false;
-      if (!resp) {
-        log('No active WhatsApp Web tab found. Please open web.whatsapp.com.');
-        if (downloadBtn) downloadBtn.disabled = true;
-        return;
+    sendMessageToWhatsapp(
+      {
+        action: 'scan',
+        deepScan: isDeep,
+        dateRange: { fromDate, toDate }
+      },
+      (resp) => {
+        if (updateBtn) updateBtn.disabled = false;
+        if (!resp) {
+          log('No active WhatsApp Web tab found. Please open web.whatsapp.com.');
+          if (downloadBtn) downloadBtn.disabled = true;
+          return;
+        }
+        log(`Scan complete: Found ${resp.count} matching media items.`);
+        if (downloadBtn) downloadBtn.disabled = resp.count === 0;
       }
-      log(`Scan complete: Found ${resp.count} media items in chat history (oldest to newest).`);
-      if (downloadBtn) downloadBtn.disabled = resp.count === 0;
-    });
+    );
   }
 
   // Event Listeners
@@ -124,8 +180,16 @@ document.addEventListener('DOMContentLoaded', () => {
         documents: document.getElementById('optDocs')?.checked ?? true
       };
 
-      log('Starting batch download process...');
-      const payload = { action: 'download', filters, limit: 300 };
+      const fromDate = fromDateInput ? fromDateInput.value : '';
+      const toDate = toDateInput ? toDateInput.value : '';
+
+      log('Starting date-filtered batch download...');
+      const payload = {
+        action: 'download',
+        filters,
+        dateRange: { fromDate, toDate },
+        limit: 500
+      };
       if (chatSelect && chatSelect.value) payload.chat = chatSelect.value;
 
       sendMessageToWhatsapp(payload, (resp) => {
@@ -133,7 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
           log('No response from WhatsApp Web page.');
           return;
         }
-        log(`Batch download initiated: ${resp.count} items queued.`);
+        log(`Batch download initiated: ${resp.count} matching items queued.`);
       });
     });
   }
