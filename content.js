@@ -5,7 +5,7 @@
   const BULK_PANEL_CLASS = 'wmdc-bulk-panel';
   const BULK_BACKDROP_CLASS = 'wmdc-bulk-backdrop';
 
-  const DOC_EXT_REGEX = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|apk|epub|json|xml|mp3|wav|tar|gz|odt)$/i;
+  const DOC_EXT_REGEX = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|apk|epub|json|xml|mp3|wav|tar|gz|odt|doc|xls|ppt)$/i;
 
   // Helper to check if extension context is valid
   function isExtensionContextValid() {
@@ -78,14 +78,44 @@
     return `${prefix}-${stamp}.${ext}`;
   }
 
-  function extractFilenameFromContainer(container, defaultExt = 'pdf') {
-    const titleEl = container.querySelector('[title*="."], span[dir="auto"][title], [data-testid="document-thumb"] + div span, span[title]');
-    if (titleEl) {
-      const name = titleEl.getAttribute('title') || titleEl.textContent?.trim();
-      if (name && name.includes('.')) {
-        return name.replace(/[/\\?%*:|"<>]/g, '_');
+  function isDocumentContainer(container) {
+    if (!container) return false;
+
+    if (
+      container.querySelector(
+        '[data-testid="document-thumb"], [data-testid="media-doc"], [data-testid="media-document"], span[data-icon*="document"], span[data-icon*="file-"], span[data-icon="preview-generic"], span[data-icon="download-document"]'
+      )
+    ) {
+      return true;
+    }
+
+    const elements = container.querySelectorAll('span, div, a, p');
+    for (const el of elements) {
+      const title = el.getAttribute('title') || '';
+      const text = (el.textContent || '').trim();
+      if (DOC_EXT_REGEX.test(title) || (DOC_EXT_REGEX.test(text) && text.length < 150)) {
+        return true;
       }
     }
+
+    return false;
+  }
+
+  function extractFilenameFromContainer(container, defaultExt = 'pdf') {
+    if (!container) return formatTimestampFilename('wa-doc', defaultExt);
+
+    const elements = container.querySelectorAll('span, div, a, p');
+    for (const el of elements) {
+      const title = el.getAttribute('title') || '';
+      if (DOC_EXT_REGEX.test(title)) {
+        return title.replace(/[/\\?%*:|"<>]/g, '_');
+      }
+      const text = (el.textContent || '').trim();
+      if (DOC_EXT_REGEX.test(text) && text.length < 150) {
+        return text.replace(/[/\\?%*:|"<>]/g, '_');
+      }
+    }
+
     return formatTimestampFilename('wa-doc', defaultExt);
   }
 
@@ -94,14 +124,8 @@
   function getDownloadTarget(container) {
     if (!container) return null;
 
-    // 1. Document attachment check (explicit testid or filename extension match)
-    const isDocThumb = Boolean(container.querySelector('[data-testid="document-thumb"], span[data-icon="download-document"]'));
-    const docTitleNode = Array.from(container.querySelectorAll('span[title], span[dir="auto"]')).find((el) => {
-      const txt = el.getAttribute('title') || el.textContent || '';
-      return DOC_EXT_REGEX.test(txt);
-    });
-
-    if (isDocThumb || docTitleNode) {
+    // 1. Document attachment check (MUST be prioritized over thumbnail img tags)
+    if (isDocumentContainer(container)) {
       const docLink = container.querySelector('a[href][download], [data-testid="document-thumb"] a[href], a[href*="mmg.whatsapp.net"], a[href*="blob:"]');
       const filename = extractFilenameFromContainer(container, 'pdf');
       const extMatch = DOC_EXT_REGEX.exec(filename);
@@ -476,6 +500,8 @@
     if (!mainChat) return [];
 
     const selectors = [
+      'div[role="row"]',
+      'div[data-id]',
       '[data-testid="msg-container"]',
       '[data-testid="document-thumb"]',
       '[data-testid="image-thumb"]',
@@ -496,7 +522,7 @@
       const target = getDownloadTarget(container);
       if (!target) return;
 
-      const uniqueKey = target.filename + '_' + (target.url !== 'pending_doc_click' ? target.url : Math.random());
+      const uniqueKey = container.getAttribute('data-id') || (target.filename + '_' + target.type);
       if (seen.has(uniqueKey)) return;
 
       seen.add(uniqueKey);
@@ -654,6 +680,8 @@
     if (!mainChat) return;
 
     const selectors = [
+      'div[role="row"]',
+      'div[data-id]',
       '[data-testid="msg-container"]',
       '[data-testid="document-thumb"]',
       '[data-testid="image-thumb"]',
